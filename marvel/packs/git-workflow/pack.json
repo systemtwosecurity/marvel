@@ -1,0 +1,1 @@
+{"name":"git-workflow","version":"1.0.0","owner":"team","description":"Git workflow conventions and branch management","categories":["git","workflow","collaboration"],"applies_to":{"extensions":[".md"]},"sensitive_paths":[".git/**","CLAUDE.md"]}

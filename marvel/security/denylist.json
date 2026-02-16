@@ -1,0 +1,32 @@
+{
+  "rules": [
+    { "id": "deny-npx", "type": "prefix", "pattern": "npx ", "reason": "Project uses pnpm - use 'pnpm exec' or 'pnpm dlx' instead of npx" },
+    { "id": "deny-npm-install", "type": "regex", "pattern": "^npm\\s+(install|i|add|ci)\\b", "reason": "Project uses pnpm - use 'pnpm install' or 'pnpm add' instead" },
+    { "id": "deny-yarn", "type": "regex", "pattern": "^yarn\\s+(install|add)\\b", "reason": "Project uses pnpm - use 'pnpm install' or 'pnpm add' instead" },
+    { "id": "deny-rm-rf-root", "type": "regex", "pattern": "rm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|\\-[a-zA-Z]*f[a-zA-Z]*r)[a-zA-Z]*\\s+/(?!Users|home|tmp)", "reason": "Destructive: removes root filesystem paths" },
+    { "id": "deny-rm-rf-slash", "type": "regex", "pattern": "rm\\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+/\\s*$", "reason": "Destructive: removes root filesystem" },
+    { "id": "deny-rm-rf-home", "type": "regex", "pattern": "rm\\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+~/?\\s*$", "reason": "Destructive: removes entire home directory" },
+    { "id": "deny-rm-rf-star", "type": "regex", "pattern": "rm\\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+/\\*", "reason": "Destructive: removes all root level directories" },
+    { "id": "deny-rm-system-dirs", "type": "regex", "pattern": "rm\\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+/(etc|var|usr|bin|sbin|lib|boot|sys|proc)\\b", "reason": "Destructive: removes system directories" },
+    { "id": "deny-rm-no-preserve-root", "type": "contains", "pattern": "--no-preserve-root", "reason": "Destructive: bypasses rm safety" },
+    { "id": "deny-curl-pipe-bash", "type": "regex", "pattern": "curl[^|]*\\|\\s*(bash|sh|zsh|python|perl|ruby)", "reason": "Remote code execution via curl pipe" },
+    { "id": "deny-wget-pipe-bash", "type": "regex", "pattern": "wget[^|]*\\|\\s*(bash|sh|zsh|python|perl|ruby)", "reason": "Remote code execution via wget pipe" },
+    { "id": "deny-curl-pipe-sudo", "type": "regex", "pattern": "curl[^|]*\\|\\s*sudo", "reason": "Remote code execution with elevated privileges" },
+    { "id": "deny-chmod-777", "type": "regex", "pattern": "chmod\\s+(-[a-zA-Z]+\\s+)*777", "reason": "Insecure permissions: world-writable" },
+    { "id": "deny-chmod-666", "type": "regex", "pattern": "chmod\\s+(-[a-zA-Z]+\\s+)*666", "reason": "Insecure permissions: world-writable files" },
+    { "id": "deny-chmod-recursive-system", "type": "regex", "pattern": "chmod\\s+(-[a-zA-Z]*R[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+/(etc|var|usr|bin|sbin|lib)", "reason": "Destructive: recursive chmod on system dirs" },
+    { "id": "deny-chown-recursive-system", "type": "regex", "pattern": "chown\\s+(-[a-zA-Z]*R[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+/(etc|var|usr|bin|sbin|lib)", "reason": "Destructive: recursive chown on system dirs" },
+    { "id": "deny-chown-root", "type": "regex", "pattern": "chown\\s+(-[a-zA-Z]*R[a-zA-Z]*|--recursive)(?:\\s+\\S+)*\\s+/\\s*$", "reason": "Destructive: chown on root" },
+    { "id": "deny-dd-of-dev", "type": "regex", "pattern": "dd\\s+[^ ]*of=/dev/", "reason": "Destructive: writes to device" },
+    { "id": "deny-mkfs", "type": "prefix", "pattern": "mkfs", "reason": "Destructive: formats filesystem" },
+    { "id": "deny-format", "type": "prefix", "pattern": "format ", "reason": "Destructive: formats disk" },
+    { "id": "deny-shutdown", "type": "prefix", "pattern": "shutdown", "reason": "System shutdown" },
+    { "id": "deny-reboot", "type": "prefix", "pattern": "reboot", "reason": "System reboot" },
+    { "id": "deny-init-0", "type": "contains", "pattern": "init 0", "reason": "System shutdown" },
+    { "id": "deny-init-6", "type": "contains", "pattern": "init 6", "reason": "System reboot" },
+    { "id": "deny-systemctl-disable", "type": "regex", "pattern": "systemctl\\s+(disable|mask)\\s+(sshd|networking|network|firewalld|iptables)", "reason": "Disabling critical services" },
+    { "id": "deny-fdisk", "type": "prefix", "pattern": "fdisk", "reason": "Destructive: disk partitioning" },
+    { "id": "deny-parted", "type": "prefix", "pattern": "parted", "reason": "Destructive: disk partitioning" },
+    { "id": "deny-sudo-rm-rf", "type": "regex", "pattern": "sudo\\s+rm\\s+(-[a-zA-Z]*r[a-zA-Z]*|--recursive)", "reason": "Elevated destructive file removal" }
+  ]
+}

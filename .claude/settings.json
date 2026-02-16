@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "SessionStart": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh session-start"}]}],
+    "PreToolUse": [{"matcher":"Bash|Edit|Write|Read","hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh pre-tool-use","timeout":90}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh user-prompt-submit"}]}],
+    "PostToolUse": [{"matcher":"Edit|Write|Bash|Read|Grep|Glob","hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh post-tool-use"}]}],
+    "PostToolUseFailure": [{"matcher":"Edit|Write|Bash","hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh post-tool-use-failure"}]}],
+    "PermissionRequest": [{"matcher":"Bash","hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh permission-request","timeout":90}]}],
+    "PreCompact": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh pre-compact"}]}],
+    "Stop": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh stop"}]}],
+    "SubagentStart": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh subagent-start"}]}],
+    "SubagentStop": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh subagent-stop"}]}],
+    "Notification": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh notification"}]}],
+    "TeammateIdle": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh teammate-idle"}]}],
+    "TaskCompleted": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh task-completed"}]}],
+    "SessionEnd": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/marvel/tools/hooks/scripts/marvel-hook.sh session-end"}]}]
+  }
+}

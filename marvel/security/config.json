@@ -1,0 +1,12 @@
+{
+  "marvel_evaluation": {
+    "agent_evaluator": {
+      "enabled": true,
+      "model": "haiku",
+      "evaluation_timeout_ms": 30000,
+      "idle_timeout_ms": 3600000,
+      "max_cumulative_cost_usd": 0.50,
+      "confidence_auto_threshold": 0.85
+    }
+  }
+}

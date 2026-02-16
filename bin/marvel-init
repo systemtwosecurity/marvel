@@ -1,0 +1,322 @@
+#!/bin/bash
+# Copyright 2026 Detections AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# MARVEL Installation Script
+#
+# Installs MARVEL into an existing project by copying the marvel/ directory,
+# merging hook registrations into .claude/settings.json, copying slash commands,
+# skills, and agents, and building the hook daemon.
+#
+# Usage: marvel-init [target-directory]
+#
+# If target-directory is not specified, installs into the current directory.
+#
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+info()  { echo -e "${BLUE}[marvel-init]${NC} $1"; }
+ok()    { echo -e "${GREEN}[marvel-init]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[marvel-init]${NC} WARNING: $1"; }
+fail()  { echo -e "${RED}[marvel-init]${NC} ERROR: $1" >&2; exit 1; }
+
+# Resolve MARVEL source directory (where this script lives)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MARVEL_SOURCE="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Resolve target directory
+TARGET="${1:-.}"
+TARGET="$(cd "$TARGET" 2>/dev/null && pwd)" || fail "Cannot resolve target directory: ${1:-.}"
+
+info "MARVEL source: $MARVEL_SOURCE"
+info "Target project: $TARGET"
+
+# ─── Validations ──────────────────────────────────────────────────────
+
+# Must be a git repo
+if [[ ! -d "$TARGET/.git" ]] && ! git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1; then
+  fail "Target is not a git repository: $TARGET"
+fi
+
+# Must have a package.json (Node.js project)
+if [[ ! -f "$TARGET/package.json" ]]; then
+  warn "No package.json found in target. MARVEL hooks require Node.js >= 24."
+fi
+
+# Should not already have marvel/ installed
+if [[ -d "$TARGET/marvel" ]]; then
+  warn "Target already has a marvel/ directory. Existing files will be preserved; new files will be copied."
+fi
+
+# ─── Copy marvel/ directory ──────────────────────────────────────────
+
+info "Copying marvel/ directory..."
+
+# Create target marvel directory structure
+mkdir -p "$TARGET/marvel"
+
+# Copy packs (preserve existing packs, add new ones)
+if [[ -d "$MARVEL_SOURCE/marvel/packs" ]]; then
+  mkdir -p "$TARGET/marvel/packs"
+  # Copy schema file
+  cp -n "$MARVEL_SOURCE/marvel/packs/_pack.schema.json" "$TARGET/marvel/packs/_pack.schema.json" 2>/dev/null || true
+  # Copy starter packs (only if they don't already exist)
+  for pack_dir in "$MARVEL_SOURCE/marvel/packs"/*/; do
+    pack_name="$(basename "$pack_dir")"
+    if [[ ! -d "$TARGET/marvel/packs/$pack_name" ]]; then
+      cp -R "$pack_dir" "$TARGET/marvel/packs/$pack_name"
+      ok "  Added starter pack: $pack_name"
+    else
+      info "  Pack already exists, skipping: $pack_name"
+    fi
+  done
+fi
+
+# Copy security configuration
+if [[ -d "$MARVEL_SOURCE/marvel/security" ]]; then
+  mkdir -p "$TARGET/marvel/security"
+  # Copy config files (only if they don't exist)
+  for config_file in config.json allowlist.json denylist.json; do
+    if [[ ! -f "$TARGET/marvel/security/$config_file" ]]; then
+      cp "$MARVEL_SOURCE/marvel/security/$config_file" "$TARGET/marvel/security/$config_file"
+      ok "  Copied security/$config_file"
+    else
+      info "  Security config already exists, skipping: $config_file"
+    fi
+  done
+  # Copy security README
+  if [[ -f "$MARVEL_SOURCE/marvel/security/README.md" ]]; then
+    cp "$MARVEL_SOURCE/marvel/security/README.md" "$TARGET/marvel/security/README.md"
+  fi
+fi
+
+# Copy specs directory structure
+mkdir -p "$TARGET/marvel/specs/active"
+mkdir -p "$TARGET/marvel/specs/backlog"
+mkdir -p "$TARGET/marvel/specs/completed"
+mkdir -p "$TARGET/marvel/specs/templates"
+if [[ -f "$MARVEL_SOURCE/marvel/specs/templates/spec.md" ]]; then
+  cp -n "$MARVEL_SOURCE/marvel/specs/templates/spec.md" "$TARGET/marvel/specs/templates/spec.md" 2>/dev/null || true
+  ok "  Copied spec template"
+fi
+
+# Create runs directory
+mkdir -p "$TARGET/marvel/runs"
+
+# Copy tools/hooks
+if [[ -d "$MARVEL_SOURCE/marvel/tools/hooks" ]]; then
+  mkdir -p "$TARGET/marvel/tools/hooks"
+  # Copy source files, config, and scripts
+  for item in src scripts package.json tsconfig.json vitest.config.ts; do
+    if [[ -e "$MARVEL_SOURCE/marvel/tools/hooks/$item" ]]; then
+      cp -R "$MARVEL_SOURCE/marvel/tools/hooks/$item" "$TARGET/marvel/tools/hooks/$item"
+    fi
+  done
+  ok "  Copied tools/hooks"
+fi
+
+# Copy MARVEL documentation
+for doc in README.md TERMINOLOGY.md; do
+  if [[ -f "$MARVEL_SOURCE/marvel/$doc" ]]; then
+    cp "$MARVEL_SOURCE/marvel/$doc" "$TARGET/marvel/$doc"
+  fi
+done
+
+# ─── Merge .claude/settings.json ─────────────────────────────────────
+
+info "Setting up .claude/ directory..."
+
+mkdir -p "$TARGET/.claude"
+
+if [[ -f "$MARVEL_SOURCE/.claude/settings.json" ]]; then
+  if [[ -f "$TARGET/.claude/settings.json" ]]; then
+    # Check if hooks are already registered
+    if grep -q "marvel-hook.sh" "$TARGET/.claude/settings.json" 2>/dev/null; then
+      info "  Hook registrations already present in settings.json"
+    else
+      warn "  Target has an existing settings.json without MARVEL hooks."
+      warn "  You will need to manually merge hook registrations from:"
+      warn "    $MARVEL_SOURCE/.claude/settings.json"
+      # Create a reference copy
+      cp "$MARVEL_SOURCE/.claude/settings.json" "$TARGET/.claude/settings.marvel-hooks.json"
+      info "  Saved hook registrations to .claude/settings.marvel-hooks.json for reference"
+    fi
+  else
+    cp "$MARVEL_SOURCE/.claude/settings.json" "$TARGET/.claude/settings.json"
+    ok "  Created .claude/settings.json with hook registrations"
+  fi
+fi
+
+# ─── Copy commands, skills, agents ───────────────────────────────────
+
+# Copy commands
+if [[ -d "$MARVEL_SOURCE/.claude/commands" ]]; then
+  mkdir -p "$TARGET/.claude/commands"
+  if compgen -G "$MARVEL_SOURCE/.claude/commands/*" >/dev/null 2>&1; then
+    cp -R "$MARVEL_SOURCE/.claude/commands"/* "$TARGET/.claude/commands/" 2>/dev/null || true
+    ok "  Copied slash commands"
+  fi
+fi
+
+# Copy skills
+if [[ -d "$MARVEL_SOURCE/.claude/skills" ]]; then
+  mkdir -p "$TARGET/.claude/skills"
+  for skill_dir in "$MARVEL_SOURCE/.claude/skills"/*/; do
+    [[ -d "$skill_dir" ]] || continue
+    skill_name="$(basename "$skill_dir")"
+    if [[ ! -d "$TARGET/.claude/skills/$skill_name" ]]; then
+      cp -R "$skill_dir" "$TARGET/.claude/skills/$skill_name"
+      ok "  Added skill: $skill_name"
+    else
+      info "  Skill already exists, skipping: $skill_name"
+    fi
+  done
+fi
+
+# Copy agents
+if [[ -d "$MARVEL_SOURCE/.claude/agents" ]]; then
+  mkdir -p "$TARGET/.claude/agents"
+  if compgen -G "$MARVEL_SOURCE/.claude/agents/*" >/dev/null 2>&1; then
+    cp -R "$MARVEL_SOURCE/.claude/agents"/* "$TARGET/.claude/agents/" 2>/dev/null || true
+    ok "  Copied agents"
+  fi
+fi
+
+# ─── Append MARVEL section to CLAUDE.md ──────────────────────────────
+
+info "Updating CLAUDE.md..."
+
+MARVEL_SECTION='## MARVEL
+
+MARVEL hooks auto-inject relevant pack lessons before file operations.
+
+- **Packs:** `marvel/packs/<name>/guardrails.md`
+- **Specs:** `marvel/specs/active/`
+- **Rebuild hooks:** `cd marvel/tools/hooks && pnpm build`
+- **MARVEL docs:** `marvel/README.md`, `marvel/TERMINOLOGY.md`'
+
+if [[ -f "$TARGET/CLAUDE.md" ]]; then
+  if grep -q "## MARVEL" "$TARGET/CLAUDE.md" 2>/dev/null; then
+    info "  CLAUDE.md already has a MARVEL section"
+  else
+    echo "" >> "$TARGET/CLAUDE.md"
+    echo "$MARVEL_SECTION" >> "$TARGET/CLAUDE.md"
+    ok "  Appended MARVEL section to CLAUDE.md"
+  fi
+else
+  echo "$MARVEL_SECTION" > "$TARGET/CLAUDE.md"
+  ok "  Created CLAUDE.md with MARVEL section"
+fi
+
+# ─── Add .gitignore entries ──────────────────────────────────────────
+
+info "Updating .gitignore..."
+
+GITIGNORE_ENTRIES=(
+  "marvel/runs/"
+  "marvel/guidance-archive.jsonl"
+  "marvel/security/learned.jsonl"
+  "marvel/security/suggestions.jsonl"
+  "marvel/security/decisions.jsonl"
+  "marvel/security/agent-evaluations.jsonl"
+  "marvel/tools/hooks/node_modules/"
+  "marvel/tools/hooks/dist/"
+)
+
+if [[ -f "$TARGET/.gitignore" ]]; then
+  for entry in "${GITIGNORE_ENTRIES[@]}"; do
+    if ! grep -qF "$entry" "$TARGET/.gitignore" 2>/dev/null; then
+      echo "$entry" >> "$TARGET/.gitignore"
+    fi
+  done
+  ok "  Updated .gitignore"
+else
+  printf '%s\n' "${GITIGNORE_ENTRIES[@]}" > "$TARGET/.gitignore"
+  ok "  Created .gitignore"
+fi
+
+# ─── Build hooks ─────────────────────────────────────────────────────
+
+info "Building hook daemon..."
+
+if command -v pnpm >/dev/null 2>&1; then
+  (cd "$TARGET/marvel/tools/hooks" && pnpm install && pnpm build)
+  if [[ -f "$TARGET/marvel/tools/hooks/dist/daemon.bundle.js" ]]; then
+    ok "  Hook daemon built successfully"
+  else
+    warn "  Build completed but daemon.bundle.js not found. Check build output."
+  fi
+else
+  warn "  pnpm not found. Install pnpm and run:"
+  warn "    cd $TARGET/marvel/tools/hooks && pnpm install && pnpm build"
+fi
+
+# ─── Make scripts executable ─────────────────────────────────────────
+
+if [[ -f "$TARGET/marvel/tools/hooks/scripts/marvel-hook.sh" ]]; then
+  chmod +x "$TARGET/marvel/tools/hooks/scripts/marvel-hook.sh"
+fi
+
+# ─── Validate installation ──────────────────────────────────────────
+
+info "Validating installation..."
+
+ERRORS=0
+
+# Check marvel directory
+if [[ ! -d "$TARGET/marvel/packs" ]]; then
+  warn "  Missing: marvel/packs/"
+  ERRORS=$((ERRORS + 1))
+fi
+
+if [[ ! -d "$TARGET/marvel/security" ]]; then
+  warn "  Missing: marvel/security/"
+  ERRORS=$((ERRORS + 1))
+fi
+
+if [[ ! -f "$TARGET/marvel/tools/hooks/scripts/marvel-hook.sh" ]]; then
+  warn "  Missing: marvel/tools/hooks/scripts/marvel-hook.sh"
+  ERRORS=$((ERRORS + 1))
+fi
+
+if [[ ! -x "$TARGET/marvel/tools/hooks/scripts/marvel-hook.sh" ]]; then
+  warn "  marvel-hook.sh is not executable"
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Check settings.json
+if [[ ! -f "$TARGET/.claude/settings.json" ]]; then
+  warn "  Missing: .claude/settings.json"
+  ERRORS=$((ERRORS + 1))
+elif ! grep -q "marvel-hook.sh" "$TARGET/.claude/settings.json" 2>/dev/null; then
+  warn "  .claude/settings.json does not contain MARVEL hook registrations"
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Check starter packs
+for pack in code-quality git-workflow testing security; do
+  if [[ ! -f "$TARGET/marvel/packs/$pack/pack.json" ]]; then
+    warn "  Missing starter pack: $pack"
+    ERRORS=$((ERRORS + 1))
+  fi
+done
+
+echo ""
+if [[ $ERRORS -eq 0 ]]; then
+  ok "MARVEL installed successfully into $TARGET"
+  echo ""
+  info "Next steps:"
+  info "  1. Start a Claude Code session in your project"
+  info "  2. Look for 'MARVEL session started' with active packs"
+  info "  3. Add custom packs under marvel/packs/"
+  info "  4. Use /marvel-health to check system status"
+else
+  warn "Installation completed with $ERRORS warning(s). Review the output above."
+fi

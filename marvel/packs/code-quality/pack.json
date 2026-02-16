@@ -1,0 +1,1 @@
+{"name":"code-quality","version":"1.0.0","owner":"team","description":"TypeScript code quality, patterns, and conventions","categories":["typescript","code-quality","patterns"],"applies_to":{"extensions":[".ts",".tsx",".js",".jsx"]},"excludes_paths":["node_modules/","dist/",".next/"]}

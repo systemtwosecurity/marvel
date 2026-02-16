@@ -1,0 +1,44 @@
+{
+  "name": "marvel-hooks",
+  "version": "0.1.0",
+  "description": "MARVEL hooks daemon for Claude Code integration",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/daemon.js",
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run",
+    "build": "pnpm run test:run && pnpm run typecheck && pnpm run compile && pnpm run bundle && pnpm run validate",
+    "compile": "tsc",
+    "bundle": "pnpm run bundle:daemon && pnpm run bundle:cli && pnpm run bundle:analyze && pnpm run bundle:analyze-evaluations",
+    "bundle:client": "esbuild src/client.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/client.bundle.js --external:fsevents --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "bundle:daemon": "esbuild src/daemon.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/daemon.bundle.js --external:fsevents --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "bundle:cli": "esbuild src/bin/cli.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/cli.bundle.js --external:fsevents --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "validate": "node dist/schema/validate-settings.js",
+    "generate": "node dist/schema/generate-settings.js --write",
+    "generate:print": "node dist/schema/generate-settings.js",
+    "daemon:start": "node dist/daemon.bundle.js start &",
+    "daemon:stop": "node dist/daemon.bundle.js stop",
+    "daemon:status": "node dist/daemon.bundle.js status",
+    "bundle:analyze": "esbuild src/bin/analyze-decisions.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/analyze-decisions.js --external:fsevents --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "analyze-decisions": "node dist/analyze-decisions.js",
+    "bundle:analyze-evaluations": "esbuild src/bin/analyze-evaluations.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/analyze-evaluations.js --external:fsevents --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "analyze-evaluations": "node dist/analyze-evaluations.js"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
+    "@types/node": "^25.2.3",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

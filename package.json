@@ -1,0 +1,31 @@
+{
+  "name": "marvel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MARVEL — Model-Augmented Reasoning, Verification, Execution, and Learning for Claude Code",
+  "license": "Apache-2.0",
+  "author": "Detections AI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/systemtwosecurity/marvel"
+  },
+  "homepage": "https://github.com/systemtwosecurity/marvel",
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "agentic",
+    "knowledge-packs",
+    "security-gate",
+    "developer-tools"
+  ],
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "build": "cd marvel/tools/hooks && pnpm build",
+    "test": "cd marvel/tools/hooks && pnpm test",
+    "test:run": "cd marvel/tools/hooks && pnpm test:run",
+    "typecheck": "cd marvel/tools/hooks && pnpm typecheck"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,1 @@
+{"name":"testing","version":"1.0.0","owner":"team","description":"Test quality and testing best practices","categories":["testing","vitest","test-quality"],"applies_to":{"extensions":[".test.ts",".test.tsx",".spec.ts",".spec.tsx"]}}

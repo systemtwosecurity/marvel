@@ -1,0 +1,1 @@
+{"name":"security","version":"1.0.0","owner":"team","description":"Security best practices and input validation","categories":["security","auth","validation"],"applies_to":{"extensions":[".ts",".tsx",".js",".jsx"]},"sensitive_paths":["**/auth/**","**/middleware/**","**/.env*"]}

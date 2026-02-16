@@ -1,0 +1,261 @@
+#!/bin/bash
+# Copyright 2026 Detections AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# MARVEL Daemon Management Tool
+#
+# Manage MARVEL hooks daemons across worktrees.
+#
+# Usage: marvel-daemon <list|log|restart|status|cleanup> [worktree]
+#
+
+set -euo pipefail
+
+MARVEL_TEMP_DIR="${TMPDIR:-/tmp}/mhd-$(id -u)"
+
+usage() {
+  cat <<'EOF'
+MARVEL Daemon Management Tool
+
+Usage: marvel-daemon <command> [worktree-path]
+
+Commands:
+  list              List all running daemons across worktrees
+  log [worktree]    Tail daemon log for current/specified worktree
+  restart [worktree] Kill daemon (auto-restarts on next hook)
+  status [worktree] Show daemon status for current/specified worktree
+  cleanup           Remove stale PID/socket files for dead daemons
+
+If worktree is not specified, uses CLAUDE_PROJECT_DIR or pwd.
+EOF
+  exit 1
+}
+
+# Hash a directory path the same way marvel-hook.sh does
+hash_dir() {
+  echo -n "$1" | shasum -a 256 | cut -c1-12
+}
+
+# Resolve worktree path: explicit arg > CLAUDE_PROJECT_DIR > pwd
+resolve_worktree() {
+  local wt="${1:-}"
+  if [[ -n "$wt" ]]; then
+    # Normalize to absolute path
+    wt=$(cd "$wt" 2>/dev/null && pwd) || { echo "Error: cannot resolve path $wt" >&2; exit 1; }
+  elif [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    wt="$CLAUDE_PROJECT_DIR"
+  else
+    wt="$(pwd)"
+  fi
+  echo "$wt"
+}
+
+# Try to find which project directory a hash belongs to.
+# Checks the current directory, CLAUDE_PROJECT_DIR, and git worktrees if available.
+resolve_hash_to_project() {
+  local target_hash="$1"
+
+  # Determine repo root from the current directory or CLAUDE_PROJECT_DIR
+  local repo_root=""
+  if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    repo_root="$CLAUDE_PROJECT_DIR"
+  else
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  fi
+
+  # Check repo root itself
+  if [[ -d "$repo_root" ]]; then
+    local h
+    h=$(hash_dir "$repo_root")
+    if [[ "$h" == "$target_hash" ]]; then
+      echo "$repo_root"
+      return
+    fi
+  fi
+
+  # Check git worktrees if available
+  if command -v git >/dev/null 2>&1; then
+    while IFS= read -r wt_line; do
+      # git worktree list outputs: /path/to/worktree  hash [branch]
+      local wt_path
+      wt_path=$(echo "$wt_line" | awk '{print $1}')
+      if [[ -n "$wt_path" && -d "$wt_path" ]]; then
+        local h
+        h=$(hash_dir "$wt_path")
+        if [[ "$h" == "$target_hash" ]]; then
+          echo "$wt_path"
+          return
+        fi
+      fi
+    done < <(git -C "$repo_root" worktree list 2>/dev/null || true)
+  fi
+
+  echo "unknown"
+}
+
+cmd_list() {
+  if [[ ! -d "$MARVEL_TEMP_DIR" ]]; then
+    echo "No daemon directory found at $MARVEL_TEMP_DIR"
+    exit 0
+  fi
+
+  local found=0
+  for pid_file in "$MARVEL_TEMP_DIR"/p-project-*.pid; do
+    [[ -f "$pid_file" ]] || continue
+    found=1
+
+    local basename
+    basename=$(basename "$pid_file" .pid)
+    local hash="${basename#p-project-}"
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null)
+    local sock_file="${pid_file%.pid}.sock"
+    local log_file="${pid_file%.pid}.log"
+
+    local status="DEAD"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      status="ALIVE"
+    fi
+
+    local sock_exists="no"
+    [[ -S "$sock_file" ]] && sock_exists="yes"
+
+    local log_size="0"
+    [[ -f "$log_file" ]] && log_size=$(wc -c < "$log_file" | tr -d ' ')
+
+    local worktree
+    worktree=$(resolve_hash_to_project "$hash")
+
+    printf "%-6s pid=%-7s sock=%-3s log=%sB  %s  (%s)\n" \
+      "$status" "$pid" "$sock_exists" "$log_size" "$worktree" "$hash"
+  done
+
+  if [[ $found -eq 0 ]]; then
+    echo "No daemons found"
+  fi
+}
+
+cmd_log() {
+  local wt
+  wt=$(resolve_worktree "${1:-}")
+  local hash
+  hash=$(hash_dir "$wt")
+  local log_file="$MARVEL_TEMP_DIR/p-project-${hash}.log"
+
+  if [[ ! -f "$log_file" ]]; then
+    echo "No log file found for $wt (hash: $hash)"
+    echo "Expected: $log_file"
+    exit 1
+  fi
+
+  echo "Tailing log for $wt (hash: $hash)"
+  echo "File: $log_file"
+  echo "---"
+  tail -f "$log_file"
+}
+
+cmd_restart() {
+  local wt
+  wt=$(resolve_worktree "${1:-}")
+  local hash
+  hash=$(hash_dir "$wt")
+  local pid_file="$MARVEL_TEMP_DIR/p-project-${hash}.pid"
+  local sock_file="$MARVEL_TEMP_DIR/p-project-${hash}.sock"
+
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      echo "Killed daemon pid=$pid for $wt"
+    else
+      echo "Daemon was not running for $wt"
+    fi
+    rm -f "$pid_file" "$sock_file" 2>/dev/null
+  else
+    echo "No daemon found for $wt (hash: $hash)"
+  fi
+
+  echo "Will auto-restart on next hook invocation"
+}
+
+cmd_status() {
+  local wt
+  wt=$(resolve_worktree "${1:-}")
+  local hash
+  hash=$(hash_dir "$wt")
+  local pid_file="$MARVEL_TEMP_DIR/p-project-${hash}.pid"
+  local sock_file="$MARVEL_TEMP_DIR/p-project-${hash}.sock"
+  local log_file="$MARVEL_TEMP_DIR/p-project-${hash}.log"
+
+  echo "Worktree: $wt"
+  echo "Hash:     $hash"
+
+  if [[ ! -f "$pid_file" ]]; then
+    echo "Status:   NOT RUNNING (no PID file)"
+    exit 1
+  fi
+
+  local pid
+  pid=$(cat "$pid_file" 2>/dev/null)
+  echo "PID:      $pid"
+  echo "Socket:   $sock_file"
+
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    echo "Status:   ALIVE"
+  else
+    echo "Status:   DEAD (stale PID file)"
+  fi
+
+  [[ -S "$sock_file" ]] && echo "Socket:   exists" || echo "Socket:   missing"
+
+  if [[ -f "$log_file" ]]; then
+    local log_size
+    log_size=$(wc -c < "$log_file" | tr -d ' ')
+    echo "Log:      $log_file ($log_size bytes)"
+  else
+    echo "Log:      not found"
+  fi
+}
+
+cmd_cleanup() {
+  if [[ ! -d "$MARVEL_TEMP_DIR" ]]; then
+    echo "No daemon directory found"
+    exit 0
+  fi
+
+  local cleaned=0
+  local total=0
+
+  for pid_file in "$MARVEL_TEMP_DIR"/p-project-*.pid; do
+    [[ -f "$pid_file" ]] || continue
+    total=$((total + 1))
+
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null)
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+      local sock_file="${pid_file%.pid}.sock"
+      rm -f "$pid_file" "$sock_file" 2>/dev/null
+      cleaned=$((cleaned + 1))
+    fi
+  done
+
+  echo "Cleaned up $cleaned/$total daemon entries"
+}
+
+# Main
+COMMAND="${1:-}"
+shift || true
+
+case "$COMMAND" in
+  list)    cmd_list ;;
+  log)     cmd_log "$@" ;;
+  restart) cmd_restart "$@" ;;
+  status)  cmd_status "$@" ;;
+  cleanup) cmd_cleanup ;;
+  --help|-h|"") usage ;;
+  *)
+    echo "Unknown command: $COMMAND" >&2
+    usage
+    ;;
+esac

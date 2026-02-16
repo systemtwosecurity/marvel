@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "pack.json",
+  "title": "MARVEL Pack Metadata",
+  "description": "Schema for pack.json files in MARVEL packs",
+  "type": "object",
+  "required": ["name", "version", "owner"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Pack name (matches directory name)",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "owner": {
+      "type": "string",
+      "description": "Team or individual responsible for this pack"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of pack purpose"
+    },
+    "categories": {
+      "type": "array",
+      "description": "Knowledge domains this pack covers",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "default": []
+    },
+    "applies_to": {
+      "type": "object",
+      "description": "When this pack's lessons should be injected",
+      "properties": {
+        "extensions": {
+          "type": "array",
+          "description": "File extensions that trigger this pack",
+          "items": {
+            "type": "string",
+            "pattern": "^\\.[a-z0-9.]+$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "depends_on": {
+      "type": "array",
+      "description": "Other packs this pack depends on",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "sensitive_paths": {
+      "type": "array",
+      "description": "Glob patterns for sensitive files in this domain",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "excludes_paths": {
+      "type": "array",
+      "description": "Path prefixes where this pack should NOT be injected (e.g. marvel/, node_modules/)",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "references": {
+      "type": "object",
+      "description": "Key file paths and documentation links",
+      "properties": {
+        "code_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "doc_links": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,32 @@
+# MARVEL runtime data
+marvel/runs/
+marvel/guidance-archive.jsonl
+marvel/security/learned.jsonl
+marvel/security/suggestions.jsonl
+marvel/security/decisions.jsonl
+marvel/security/agent-evaluations.jsonl
+
+# Build output
+marvel/tools/hooks/node_modules/
+marvel/tools/hooks/dist/
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+pnpm-debug.log*
