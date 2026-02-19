@@ -23,7 +23,8 @@
     "build": "cd marvel/tools/hooks && pnpm build",
     "test": "cd marvel/tools/hooks && pnpm test",
     "test:run": "cd marvel/tools/hooks && pnpm test:run",
-    "typecheck": "cd marvel/tools/hooks && pnpm typecheck"
+    "typecheck": "cd marvel/tools/hooks && pnpm typecheck",
+    "lint": "echo 'No linter configured yet'"
   },
   "engines": {
     "node": ">=24"
