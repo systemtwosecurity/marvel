@@ -32,6 +32,8 @@ import { handlePermissionRequest } from "./hooks/permission-request.js";
 import { handlePreCompact } from "./hooks/pre-compact.js";
 import { handlePostToolUseFailure } from "./hooks/post-tool-use-failure.js";
 import { handleSubagentStart, handleSubagentStop, handleNotification, handleTeammateIdle, handleTaskCompleted } from "./hooks/lifecycle-hooks.js";
+import { handlePostCompactAgents } from "./hooks/post-compact-agents.js";
+import { clearSession } from "./lib/agent-registry.js";
 import { shutdownEvalSession, warmupEvalSession } from "./lib/agent-evaluator.js";
 import {
   buildHookContext,
@@ -133,7 +135,10 @@ const handlers: Record<string, HookHandler> = {
   "permission-request": handlePermissionRequest,
   "session-end": async (input) => {
     const sid = input?.session_id as string | undefined;
-    if (sid) activeSessions.delete(sid);
+    if (sid) {
+      activeSessions.delete(sid);
+      clearSession(sid);
+    }
 
     if (activeSessions.size === 0) {
       // Last session leaving — full cleanup + self-terminate
@@ -164,6 +169,7 @@ const handlers: Record<string, HookHandler> = {
     return handlePreCompact(input);
   },
   "post-tool-use-failure": handlePostToolUseFailure,
+  "post-compact-agents": handlePostCompactAgents,
   "subagent-start": handleSubagentStart,
   "subagent-stop": handleSubagentStop,
   "notification": handleNotification,

@@ -10,7 +10,8 @@
 import * as path from "path";
 import type { PreCompactHookInput, SyncHookJSONOutput } from "../sdk-types.js";
 import type { RunState } from "../types.js";
-import { findRunDir } from "../lib/paths.js";
+import { findRunDir, getTempDir } from "../lib/paths.js";
+import { serializeForSession, hasSessionAgents } from "../lib/agent-registry.js";
 import { safeReadJson, safeWriteJson } from "../lib/file-ops.js";
 import { logDebug, buildHookContext } from "../lib/logger.js";
 
@@ -49,6 +50,20 @@ export async function handlePreCompact(input: PreCompactHookInput): Promise<Sync
 
   safeWriteJson(runJsonPath, runState, context);
 
+  // Serialize agent state to temp file as fallback for daemon restarts
+  const sessionId = (input as Record<string, unknown>).session_id as string | undefined;
+  let agentNote = "";
+  if (sessionId && hasSessionAgents(sessionId)) {
+    const agentState = serializeForSession(sessionId);
+    const agentFilePath = path.join(getTempDir(), `agents-${sessionId}.json`);
+    safeWriteJson(agentFilePath, agentState, context, false);
+    const runningCount = agentState.agents.filter((a) => a.status === "running").length;
+    const totalCount = agentState.agents.length;
+    logDebug(`Serialized ${totalCount} agents (${runningCount} running) to ${agentFilePath}`, context);
+
+    agentNote = `\n\n**CRITICAL — Agent State:** ${runningCount} of ${totalCount} agents were running at compaction time. Their state has been preserved and will be re-injected after compaction. Do NOT re-launch these agents or begin work that depends on their results.`;
+  }
+
   // Return custom summary prompt to guide context compaction
   const summaryPrompt = `When summarizing this conversation for context preservation, include:
 
@@ -62,7 +77,7 @@ Ask yourself: "Will this detail matter when work resumes after compaction?"
 - If yes → include it with specifics (file paths, function names, error messages)
 - If no → omit it
 
-Preserve MARVEL run context: Run ID ${runState.runId}, active packs: ${runState.activePacks?.join(", ") || "none"}, corrections: ${runState.correctionCount || 0}`;
+Preserve MARVEL run context: Run ID ${runState.runId}, active packs: ${runState.activePacks?.join(", ") || "none"}, corrections: ${runState.correctionCount || 0}${agentNote}`;
 
   // PreCompact isn't in the SDK's hookEventName union yet, but Claude Code accepts additionalContext.
   return {

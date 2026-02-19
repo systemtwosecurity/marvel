@@ -125,6 +125,7 @@ export interface HooksConfiguration {
 
 // Full settings.json schema
 export interface ClaudeSettings {
+  plansDirectory?: string;
   permissions?: {
     allow?: string[];
     deny?: string[];

@@ -21,6 +21,7 @@ import type { RunState, ActivityEventType } from "../types.js";
 import { findRunDir } from "../lib/paths.js";
 import { safeReadJson, safeWriteJson } from "../lib/file-ops.js";
 import { logDebug, buildHookContext, type LogContext } from "../lib/logger.js";
+import { registerAgent, completeAgent, trackTeammate } from "../lib/agent-registry.js";
 
 function logActivity(
   activityType: ActivityEventType,
@@ -57,12 +58,14 @@ function logActivity(
 export async function handleSubagentStart(input: SubagentStartHookInput): Promise<SyncHookJSONOutput> {
   const context = buildHookContext("subagent-start", input);
   logActivity("subagent_start", { agent_id: input.agent_id, agent_type: input.agent_type }, context);
+  registerAgent(input.session_id, input.agent_id, input.agent_type, context);
   return {};
 }
 
 export async function handleSubagentStop(input: SubagentStopHookInput): Promise<SyncHookJSONOutput> {
   const context = buildHookContext("subagent-stop", input);
   logActivity("subagent_stop", { agent_id: input.agent_id, agent_transcript_path: input.agent_transcript_path }, context);
+  completeAgent(input.session_id, input.agent_id, input.agent_transcript_path, context);
   return {};
 }
 
@@ -75,6 +78,7 @@ export async function handleNotification(input: NotificationHookInput): Promise<
 export async function handleTeammateIdle(input: TeammateIdleHookInput): Promise<SyncHookJSONOutput> {
   const context = buildHookContext("teammate-idle", input);
   logActivity("teammate_idle", { teammate_name: input.teammate_name, team_name: input.team_name }, context);
+  trackTeammate(input.session_id, input.teammate_name, input.team_name, context);
   return {};
 }
 
