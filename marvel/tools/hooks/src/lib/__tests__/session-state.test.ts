@@ -332,6 +332,20 @@ describe("session ID from environment", () => {
     const state = loadSessionState();
     expect(state.sessionId).toBe("unknown");
   });
+
+  it("prefers context.sessionId over process.env.CLAUDE_SESSION_ID", () => {
+    process.env.CLAUDE_SESSION_ID = "env-session";
+
+    const state = loadSessionState({ sessionId: "context-session" });
+    expect(state.sessionId).toBe("context-session");
+  });
+
+  it("uses process.env when context has no sessionId", () => {
+    process.env.CLAUDE_SESSION_ID = "env-session";
+
+    const state = loadSessionState({ hookType: "test" });
+    expect(state.sessionId).toBe("env-session");
+  });
 });
 
 describe("cross-session isolation", () => {

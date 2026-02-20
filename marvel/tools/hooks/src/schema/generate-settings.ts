@@ -175,7 +175,27 @@ function main(): void {
       fs.mkdirSync(claudeDir, { recursive: true });
     }
 
-    fs.writeFileSync(settingsPath, json + "\n");
+    // Read-merge-write: preserve existing settings, only update the hooks key
+    const generated = JSON.parse(json) as Record<string, unknown>;
+    let merged = generated;
+
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const existing = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+        merged = { ...existing, hooks: generated.hooks };
+      } catch {
+        // Existing file is corrupted — back it up before overwriting
+        const backupPath = settingsPath + `.backup-${Date.now()}`;
+        try {
+          fs.copyFileSync(settingsPath, backupPath);
+          console.error(`Backed up corrupted settings to: ${backupPath}`);
+        } catch {
+          // Best-effort backup
+        }
+      }
+    }
+
+    fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + "\n");
     console.error(`Written to: ${settingsPath}`);
   } else {
     console.log(json);

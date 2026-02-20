@@ -53,11 +53,13 @@ export type PreCommitCheckType = keyof typeof PRECOMMIT_PATTERNS;
 /**
  * Get the session state file path.
  * Uses /tmp with session ID for cross-daemon persistence.
+ * Prefers the explicit sessionId parameter over process.env to avoid
+ * corruption when multiple async handlers interleave.
  */
-function getStateFilePath(): string {
-  const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
+function getStateFilePath(sessionId?: string): string {
+  const sid = sessionId || process.env.CLAUDE_SESSION_ID || "unknown";
   const tmpDir = getTempDir();
-  return `${tmpDir}/session-${sessionId}.json`;
+  return `${tmpDir}/session-${sid}.json`;
 }
 
 /**
@@ -74,8 +76,8 @@ function ensureStateDir(): void {
  * Load session state from disk.
  */
 export function loadSessionState(context?: LogContext): SessionState {
-  const stateFile = getStateFilePath();
-  const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
+  const sessionId = context?.sessionId || process.env.CLAUDE_SESSION_ID || "unknown";
+  const stateFile = getStateFilePath(sessionId);
 
   try {
     if (fs.existsSync(stateFile)) {
@@ -115,7 +117,8 @@ export function loadSessionState(context?: LogContext): SessionState {
 export function saveSessionState(state: SessionState, context?: LogContext): boolean {
   try {
     ensureStateDir();
-    const stateFile = getStateFilePath();
+    const sessionId = context?.sessionId || process.env.CLAUDE_SESSION_ID;
+    const stateFile = getStateFilePath(sessionId);
     state.lastUpdated = new Date().toISOString();
     fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), { mode: 0o600 });
     logDebug("Saved session state", context);
