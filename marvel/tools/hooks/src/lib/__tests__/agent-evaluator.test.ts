@@ -392,6 +392,12 @@ describe("analyzeWithAgent", () => {
     expect(result.suggestions?.allow).toEqual([
       { pattern: "git status", reason: "Read-only git command" },
     ]);
+    // suggestedRule must flow through for the learning pipeline
+    expect(result.suggestedRule).toEqual({
+      type: "prefix",
+      pattern: "git status",
+      reason: "Read-only git command",
+    });
   });
 });
 

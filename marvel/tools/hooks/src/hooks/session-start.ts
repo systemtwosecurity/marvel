@@ -15,6 +15,7 @@ import { loadAllPacks } from "../loaders/pack-loader.js";
 import { findMarvelRoot, getTempDir } from "../lib/paths.js";
 import { safeMkdir, safeWriteJson } from "../lib/file-ops.js";
 import { logDebug, logWarn, buildHookContext } from "../lib/logger.js";
+import { isEvalEnabled } from "../lib/agent-evaluator.js";
 
 function generateRunId(): string {
   const now = new Date();
@@ -89,6 +90,17 @@ export async function handleSessionStart(
     logDebug(`Hook health: session=${sessionId ?? "unset"}, tempFiles=${files.length}, pidFiles=${staleCount}`, context);
   } catch {
     // Non-fatal — don't block session start for diagnostics
+  }
+
+  // Check security evaluator health
+  const evalStatus = isEvalEnabled();
+  if (!evalStatus.enabled) {
+    healthLines.push(
+      `WARNING: Security LLM evaluator is disabled — unknown commands will require manual confirmation. ${evalStatus.reason}`,
+    );
+    logWarn(`Security evaluator disabled: ${evalStatus.reason}`, context);
+  } else {
+    logDebug("Security evaluator enabled", context);
   }
 
   // Build context message

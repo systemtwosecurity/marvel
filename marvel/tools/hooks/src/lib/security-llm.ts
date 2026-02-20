@@ -26,6 +26,7 @@ export interface LlmAnalysisResult {
     allow?: Array<{ pattern: string; reason: string }>;
     deny?: Array<{ pattern: string; reason: string }>;
   };
+  suggestedRule?: { type: "prefix" | "regex" | "contains"; pattern: string; reason: string };
 }
 
 /**

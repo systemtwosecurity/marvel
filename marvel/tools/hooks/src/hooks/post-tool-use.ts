@@ -24,7 +24,7 @@ export async function handlePostToolUse(input: PostToolUseHookInput): Promise<Sy
   const toolInput = input.tool_input as Record<string, unknown> | undefined;
 
   // Process Bash command approvals for learning
-  // If this Bash command had an "ask" decision and user approved it, learn from it
+  // If this command had a pending decision (LLM "allow" or user-approved "ask"), learn its pattern
   if (toolName === "Bash" && toolInput?.command) {
     const command = toolInput.command as string;
     const learned = processApprovedCommand(command, context);

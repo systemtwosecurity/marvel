@@ -89,7 +89,30 @@ describe("extractPattern — absolute paths to project-relative", () => {
   });
 });
 
+describe("extractPattern — gh as subcommand prefix", () => {
+  it("gh pr list → gh pr", () => {
+    const { pattern, type } = extractPattern("gh pr list");
+    expect(pattern).toBe("gh pr");
+    expect(type).toBe("prefix");
+  });
+
+  it("gh issue view 123 → gh issue", () => {
+    const { pattern } = extractPattern("gh issue view 123");
+    expect(pattern).toBe("gh issue");
+  });
+
+  it("gh api repos/owner/repo → gh api", () => {
+    const { pattern } = extractPattern("gh api repos/owner/repo");
+    expect(pattern).toBe("gh api");
+  });
+});
+
 describe("isPatternSafe", () => {
+  it("accepts gh pr (5 chars)", () => {
+    const result = isPatternSafe("gh pr", "gh");
+    expect(result.safe).toBe(true);
+  });
+
   it("accepts node -e (6 chars)", () => {
     const result = isPatternSafe("node -e", "node");
     expect(result.safe).toBe(true);

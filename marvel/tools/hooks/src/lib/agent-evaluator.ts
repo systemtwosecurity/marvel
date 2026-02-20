@@ -214,7 +214,7 @@ export async function analyzeWithAgent(
 
   // Feature flag check (no lock needed)
   if (!config.enabled) {
-    logDebug("Agent evaluator disabled, returning ask", context);
+    logWarn("Agent evaluator disabled — unknown commands will require manual confirmation", context);
     return { decision: "ask", reason: "Agent evaluator disabled — user confirmation required" };
   }
 
@@ -407,6 +407,7 @@ async function runAgentEvaluation(
           ],
         }
       : undefined,
+    suggestedRule: decision.suggested_rule,
   };
 }
 
@@ -582,6 +583,18 @@ function cleanupSession(): void {
  * Shut down the evaluation session.
  * Called from SessionEnd hook or daemon shutdown.
  */
+/**
+ * Check whether the agent evaluator is enabled.
+ * Used by session-start to surface a warning when the evaluator is off.
+ */
+export function isEvalEnabled(): { enabled: boolean; reason?: string } {
+  const config = loadConfig();
+  if (!config.enabled) {
+    return { enabled: false, reason: "agent_evaluator.enabled is false in marvel/security/config.json" };
+  }
+  return { enabled: true };
+}
+
 export async function shutdownEvalSession(): Promise<void> {
   logDebug("Shutting down agent evaluation session");
   // Await in-flight warmup so we don't orphan a CLI process
