@@ -4,8 +4,9 @@
 /**
  * Pending Decisions Tracker
  *
- * Tracks Bash commands that received "ask" decisions and are awaiting user response.
- * When a command later appears in PostToolUse, we know the user approved it.
+ * Tracks Bash commands that received "ask" or LLM "allow" decisions.
+ * When a command later appears in PostToolUse, we learn the pattern
+ * so future invocations can skip the LLM evaluation.
  *
  * Uses in-memory storage with automatic cleanup of stale entries.
  */
@@ -18,6 +19,7 @@ interface PendingDecision {
   description?: string;
   timestamp: number;
   reason: string;
+  suggestedRule?: { type: string; pattern: string; reason: string };
 }
 
 // In-memory map of pending decisions
@@ -65,13 +67,14 @@ function ensureCleanupTimer(): void {
 
 /**
  * Add a command to the pending decisions set.
- * Called when PreToolUse returns "ask" for a Bash command.
+ * Called when the security gate returns "ask" or LLM "allow" for a Bash command.
  */
 export function addPendingDecision(
   command: string,
   reason: string,
   description?: string,
-  context?: LogContext
+  context?: LogContext,
+  suggestedRule?: { type: string; pattern: string; reason: string }
 ): void {
   ensureCleanupTimer();
 
@@ -81,6 +84,7 @@ export function addPendingDecision(
     description,
     timestamp: Date.now(),
     reason,
+    suggestedRule,
   };
 
   pendingDecisions.set(key, decision);
@@ -91,7 +95,7 @@ export function addPendingDecision(
  * Check if a command has a pending decision and consume it.
  * Returns the pending decision if found (and removes it), null otherwise.
  *
- * Called from PostToolUse to check if a Bash command was previously "ask".
+ * Called from PostToolUse to check if a Bash command had a pending decision.
  */
 export function consumePendingDecision(
   command: string,

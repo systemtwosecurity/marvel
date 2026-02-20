@@ -13,6 +13,8 @@
  *
  * Learning:
  * - When "ask" is returned and user approves, the command pattern is learned
+ * - When "allow" is returned by the LLM, the pattern is also learned (so future
+ *   invocations skip the LLM and match via learned rules instead)
  * - Learned rules persist across sessions via marvel/security/learned.jsonl
  *
  * SECURITY NOTE: Denylist is checked before learned rules to prevent dangerous
@@ -198,9 +200,11 @@ export async function evaluateBashCommand(
   try {
     const llmResult = await analyzeWithAgent(command, description, context);
 
-    // If decision is "ask", track it so we can learn from user's response
-    if (llmResult.decision === "ask") {
-      addPendingDecision(command, llmResult.reason, description, context);
+    // Track "ask" and "allow" decisions so we can learn from them.
+    // "ask": user will approve/deny → PostToolUse learns from approval.
+    // "allow": LLM already approved → PostToolUse learns the pattern to skip LLM next time.
+    if (llmResult.decision === "ask" || llmResult.decision === "allow") {
+      addPendingDecision(command, llmResult.reason, description, context, llmResult.suggestedRule);
     }
 
     trackDecision("llm", llmResult.decision);
@@ -227,9 +231,10 @@ export async function evaluateBashCommand(
 }
 
 /**
- * Process a command that was approved by the user.
- * Called from PostToolUse when a Bash command succeeds.
- * If the command had a pending "ask" decision, we learn from it.
+ * Process a command that was approved (by user or LLM).
+ * Called from PostToolUse when a Bash command completes.
+ * If the command had a pending decision (from "ask" or LLM "allow"),
+ * we learn the pattern so future invocations skip the LLM.
  *
  * @param command - The bash command that was executed
  * @param context - Logging context
@@ -239,7 +244,7 @@ export function processApprovedCommand(
   command: string,
   context?: LogContext
 ): boolean {
-  // Check if this command had a pending "ask" decision
+  // Check if this command had a pending decision (from "ask" or LLM "allow")
   const pending = consumePendingDecision(command, context);
   if (!pending) {
     // Command was not in pending set - it was either:
@@ -248,10 +253,10 @@ export function processApprovedCommand(
     return false;
   }
 
-  // User approved the command - try to learn from it
+  // Command was approved (by user or LLM) - try to learn from it
   // addLearnedRule returns null if the pattern is too dangerous to learn
-  logDebug(`Attempting to learn from user-approved command: ${command.slice(0, 50)}...`, context);
-  const rule = addLearnedRule(command, context);
+  logDebug(`Attempting to learn from approved command: ${command.slice(0, 50)}...`, context);
+  const rule = addLearnedRule(command, context, pending.suggestedRule);
 
   if (rule) {
     logDebug(`Successfully learned rule: ${rule.id}`, context);

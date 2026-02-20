@@ -92,8 +92,8 @@ const DANGEROUS_BASE_COMMANDS = [
 ];
 
 // Minimum pattern length to prevent overly broad rules
-// 6 chars allows command+flag patterns like "node -e" which are specific enough
-const MIN_PATTERN_LENGTH = 6;
+// 5 chars allows two-token subcommand patterns like "gh pr" which carry sufficient specificity
+const MIN_PATTERN_LENGTH = 5;
 
 // Patterns that are too broad as simple prefix patterns
 // These need to include subcommands or arguments to be safe
@@ -171,7 +171,7 @@ const FLAG_SUBCOMMANDS: Record<string, Set<string>> = {
 const SUBCOMMAND_PREFIXES = new Set([
   "git", "docker", "kubectl", "npm", "pnpm", "yarn", "cargo", "go",
   "pip", "uv", "brew", "apt", "dnf", "pacman", "systemctl", "journalctl",
-  "claude", "uvx", "npx",
+  "claude", "uvx", "npx", "gh",
 ]);
 
 /**
@@ -241,9 +241,22 @@ export function extractPattern(command: string): { pattern: string; type: "prefi
  */
 export function addLearnedRule(
   command: string,
-  context?: LogContext
+  context?: LogContext,
+  suggestedRule?: { type: string; pattern: string; reason: string }
 ): LearnedRule | null {
-  const { pattern, type } = extractPattern(command);
+  let pattern: string;
+  let type: "prefix" | "regex";
+
+  if (suggestedRule?.pattern) {
+    // Use LLM-suggested pattern (still validated through isPatternSafe below)
+    pattern = suggestedRule.pattern;
+    type = suggestedRule.type === "regex" ? "regex" : "prefix";
+    logDebug(`Using LLM-suggested pattern: "${pattern}" (type: ${type})`, context);
+  } else {
+    const extracted = extractPattern(command);
+    pattern = extracted.pattern;
+    type = extracted.type;
+  }
 
   // Extract base command from the meaningful command (not the raw compound)
   const meaningful = extractMeaningfulCommand(command);
