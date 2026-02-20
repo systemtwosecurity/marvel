@@ -230,8 +230,36 @@ export function matchesAllowlist(
   context: LogContext
 ): ExternalRule | null {
   const rules = loadAllowRules(context);
+  const segments = getAllSegments(command);
 
-  // Pass 1: Try full command
+  // Compound commands (multiple segments joined by &&, ;, ||, |) must have
+  // ALL segments match the allowlist. This prevents bypass via e.g.
+  // "rm -rf / && git status" where "git status" alone would match.
+  if (segments.length > 1) {
+    let allMatch = true;
+    let lastRule: ExternalRule | null = null;
+    for (const segment of segments) {
+      let matched = false;
+      for (const rule of rules) {
+        if (matchesRule(segment.raw, rule)) {
+          matched = true;
+          lastRule = rule;
+          break;
+        }
+      }
+      if (!matched) {
+        allMatch = false;
+        break;
+      }
+    }
+    if (allMatch && lastRule) {
+      logDebug(`All segments match allowlist (last rule: ${lastRule.id})`, context);
+      return lastRule;
+    }
+    return null;
+  }
+
+  // Single command — try full command first
   for (const rule of rules) {
     if (matchesRule(command, rule)) {
       logDebug(`Command matches allowlist rule: ${rule.id}`, context);
@@ -239,26 +267,13 @@ export function matchesAllowlist(
     }
   }
 
-  // Pass 2: Try normalized command (strip cd prefix, redirections, echo suffix)
+  // Try normalized command (strip cd prefix, redirections, echo suffix)
   const normalized = normalizeCommand(command);
   if (normalized !== command.trim()) {
     for (const rule of rules) {
       if (matchesRule(normalized, rule)) {
         logDebug(`Normalized command matches allowlist rule: ${rule.id} (original: ${command.slice(0, 60)})`, context);
         return rule;
-      }
-    }
-  }
-
-  // Pass 3: Try each segment of compound commands individually
-  const segments = getAllSegments(command);
-  if (segments.length > 1) {
-    for (const segment of segments) {
-      for (const rule of rules) {
-        if (matchesRule(segment.raw, rule)) {
-          logDebug(`Segment matches allowlist rule: ${rule.id} (segment: ${segment.raw.slice(0, 60)})`, context);
-          return rule;
-        }
       }
     }
   }

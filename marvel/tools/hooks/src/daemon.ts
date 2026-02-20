@@ -43,6 +43,7 @@ import {
   logWarn,
 } from "./lib/logger.js";
 import { getTempDir } from "./lib/paths.js";
+import { buildTimeoutResponse } from "./lib/timeout-response.js";
 import type { SyncHookJSONOutput } from "./sdk-types.js";
 
 // Per-daemon paths derived from daemon_id (project hash).
@@ -200,12 +201,9 @@ async function handleRequest(data: string): Promise<string> {
     request.input && typeof request.input === "object" ? request.input : {};
   process.env.MARVEL_REQUEST_ID = requestId;
 
-  // Propagate session_id from hook input so session-state.ts can key on it.
-  // Safe: daemon is single-threaded and processes one request at a time.
-  const inputSessionId = input.session_id as string | undefined;
-  if (inputSessionId) {
-    process.env.CLAUDE_SESSION_ID = inputSessionId;
-  }
+  // Session ID is passed via context (built from input.session_id by
+  // buildHookContext) rather than mutating process.env, which would be
+  // corrupted by concurrent async handlers interleaving.
 
   const context = buildHookContext(request.hook, input, { requestId });
 
@@ -218,7 +216,7 @@ async function handleRequest(data: string): Promise<string> {
   // Per-hook timeout: security hooks (pre-tool-use, permission-request) need
   // longer because they run agent evaluations (CLI spawn + Haiku thinking).
   const HANDLER_TIMEOUT_MS_DEFAULT = 9000;
-  const HANDLER_TIMEOUT_MS_SECURITY = 20000;
+  const HANDLER_TIMEOUT_MS_SECURITY = 35000; // Must exceed evaluator's 30s timeout
   const SECURITY_HOOKS = new Set(["pre-tool-use", "permission-request"]);
   const handlerTimeoutMs = SECURITY_HOOKS.has(request.hook)
     ? HANDLER_TIMEOUT_MS_SECURITY
@@ -236,7 +234,7 @@ async function handleRequest(data: string): Promise<string> {
       new Promise<SyncHookJSONOutput>((resolve) => {
         timeoutId = setTimeout(() => {
           logWarn(`Handler timeout after ${handlerTimeoutMs}ms`, context);
-          resolve({});
+          resolve(buildTimeoutResponse(request.hook, SECURITY_HOOKS.has(request.hook)));
         }, handlerTimeoutMs);
       }),
     ]);

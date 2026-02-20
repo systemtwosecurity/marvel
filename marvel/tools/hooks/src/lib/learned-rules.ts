@@ -292,13 +292,15 @@ export function addLearnedRule(
 
 /**
  * Check if a regex pattern is safe to compile.
- * Rejects patterns that are empty, too long, or contain nested quantifiers (ReDoS risk).
+ * Since extractPattern() only ever returns type: "prefix", regex patterns
+ * only enter via tampered learned.jsonl. Reject all regex metacharacters
+ * so regex rules degrade to literal substring matches.
  */
-function isSafeRegexPattern(pattern: unknown): boolean {
+export function isSafeRegexPattern(pattern: unknown): boolean {
   if (typeof pattern !== "string") return false;
   if (pattern.length === 0 || pattern.length > 512) return false;
-  // Reject nested quantifiers: (a+)+, (.*)+, etc.
-  if (/\((?:[^()]*[+*]{1,2}[^()]*)\)[+*{]/.test(pattern)) return false;
+  // Reject any regex metacharacters — learned rules should be plain literals
+  if (/[.^$*+?()[\]{}|\\]/.test(pattern)) return false;
   return true;
 }
 

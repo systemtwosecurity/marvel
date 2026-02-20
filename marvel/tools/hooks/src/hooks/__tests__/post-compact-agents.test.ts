@@ -16,6 +16,15 @@ vi.mock("../../lib/paths.js", () => ({
   findMarvelRoot: vi.fn(),
 }));
 
+vi.mock("../../lib/logger.js", () => ({
+  logDebug: vi.fn(),
+  logInfo: vi.fn(),
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  buildHookContext: vi.fn().mockReturnValue({ hookType: "post-compact-agents" }),
+  generateRequestId: vi.fn().mockReturnValue("req_test"),
+}));
+
 vi.mock("../../lib/file-ops.js", () => ({
   safeReadJson: vi.fn(),
 }));

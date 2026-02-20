@@ -137,6 +137,15 @@ const GENERALIZE_TIMEOUT_MS = 8000;
 const GENERALIZE_MODEL = "haiku";
 
 /**
+ * Escape a string for safe interpolation into a prompt template.
+ * Uses JSON.stringify internals to correctly handle all special characters
+ * (backslashes, quotes, newlines, tabs, control chars, etc.).
+ */
+export function escapeForPromptTemplate(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
+}
+
+/**
  * Generalize raw guidance text into a reusable lesson using an LLM.
  * Falls back to verbatim guidance on any failure (fail-open).
  */
@@ -146,8 +155,8 @@ function generalizeLessonWithLLM(
   context: LogContext
 ): { title: string; description: string; actionable: string } | null {
   const prompt = GENERALIZE_PROMPT
-    .replace("{content}", content.replace(/"/g, '\\"').replace(/\n/g, "\\n"))
-    .replace("{category}", category);
+    .replace("{content}", escapeForPromptTemplate(content))
+    .replace("{category}", escapeForPromptTemplate(category));
 
   try {
     const result = spawnSync(
