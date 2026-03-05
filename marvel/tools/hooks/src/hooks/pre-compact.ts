@@ -77,7 +77,7 @@ Ask yourself: "Will this detail matter when work resumes after compaction?"
 - If yes → include it with specifics (file paths, function names, error messages)
 - If no → omit it
 
-Preserve MARVEL run context: Run ID ${runState.runId}, active packs: ${runState.activePacks?.join(", ") || "none"}, corrections: ${runState.correctionCount || 0}${agentNote}`;
+Preserve MARVEL run context: Run ID ${runState.runId}, active packs: ${runState.activePacks?.join(", ") || "none"}, corrections: ${runState.correctionCount || 0}${agentNote}${formatReflectionNote(runState)}`;
 
   // PreCompact isn't in the SDK's hookEventName union yet, but Claude Code accepts additionalContext.
   return {
@@ -85,4 +85,16 @@ Preserve MARVEL run context: Run ID ${runState.runId}, active packs: ${runState.
       additionalContext: summaryPrompt,
     },
   } as SyncHookJSONOutput;
+}
+
+function formatReflectionNote(runState: RunState): string {
+  if (!runState.activeReflection) return "";
+
+  const active = runState.activeReflection;
+  const pre = active.preReflection;
+  return `\n\n**Active Reflection (${active.taskId}):** Task "${active.description.slice(0, 80)}" is in progress. ` +
+    `Confidence: ${(pre.confidence * 100).toFixed(0)}%. ` +
+    `Assumptions: ${pre.assumptions.join("; ")}. ` +
+    `Files modified: ${active.filesModified.length}. Corrections: ${active.correctionCount}. ` +
+    `This reflection state is preserved in run.json and will continue after compaction.`;
 }

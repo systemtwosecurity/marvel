@@ -115,6 +115,7 @@ export interface RunState {
     relevanceScores: RelevanceScore[];
     lessons: string[];
   };
+  activeReflection?: TaskReflectionState;
 }
 
 export type ActivityEventType =
@@ -224,6 +225,69 @@ export interface EnhancedLesson {
     after?: string;
     file?: string;
   };
+}
+
+// Reflection types for pre/post-execution learning loop
+
+export interface ReflectionRisk {
+  risk: string;
+  mitigation?: string;
+  likelihood?: "low" | "medium" | "high";
+}
+
+export interface ActualOutcome {
+  success: boolean;
+  summary: string;
+  failureReason?: string;
+  failureStage?: "lint" | "test" | "build" | "typecheck" | "boundary" | "other";
+}
+
+export interface Reflection {
+  version: 1;
+  phase: "pre" | "post";
+  taskId: string;
+  timestamp: string;
+  plan?: string[];
+  assumptions?: string[];
+  risks?: ReflectionRisk[];
+  unknowns?: string[];
+  confidence?: number;
+  expectedVerification?: string[];
+  actualOutcome?: ActualOutcome;
+  analysis?: string;
+  nextSteps?: string[];
+  assumptionsValidated?: string[];
+  assumptionsInvalidated?: string[];
+}
+
+export interface PreReflection extends Reflection {
+  phase: "pre";
+  plan: string[];
+  assumptions: string[];
+  confidence: number;
+}
+
+export interface PostReflection extends Reflection {
+  phase: "post";
+  actualOutcome: ActualOutcome;
+  preReflectionRef: string;
+}
+
+export interface VerificationResult {
+  type: "lint" | "test" | "build" | "typecheck";
+  passed: boolean;
+  timestamp: string;
+}
+
+export interface TaskReflectionState {
+  taskId: string;
+  description: string;
+  startedAt: string;
+  preReflection: PreReflection;
+  verificationResults: VerificationResult[];
+  filesModified: string[];
+  toolCallCount: number;
+  correctionCount: number;
 }
 
 // Promotion pipeline types

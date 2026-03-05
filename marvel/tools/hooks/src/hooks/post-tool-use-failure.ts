@@ -9,11 +9,12 @@
 
 import * as path from "path";
 import type { PostToolUseFailureHookInput, SyncHookJSONOutput } from "../sdk-types.js";
-import type { ToolCallRecord, RunState } from "../types.js";
+import type { ToolCallRecord, RunState, VerificationResult } from "../types.js";
 import { findRunDir } from "../lib/paths.js";
 import { safeAppendFile, safeReadJson, safeWriteJson } from "../lib/file-ops.js";
 import { logDebug, buildHookContext } from "../lib/logger.js";
 import { summarize, getInputSummary } from "../lib/tool-summary.js";
+import { detectPreCommitCheck } from "../lib/session-state.js";
 
 export async function handlePostToolUseFailure(input: PostToolUseFailureHookInput): Promise<SyncHookJSONOutput> {
   const context = buildHookContext("post-tool-use-failure", input);
@@ -62,6 +63,22 @@ export async function handlePostToolUseFailure(input: PostToolUseFailureHookInpu
 
   if (runState.recentActivity.length > 20) {
     runState.recentActivity = runState.recentActivity.slice(-20);
+  }
+
+  // Track verification failures in active reflection
+  if (runState.activeReflection && toolName === "Bash") {
+    const toolInput = input.tool_input as Record<string, unknown> | undefined;
+    if (toolInput?.command) {
+      const checkType = detectPreCommitCheck(toolInput.command as string);
+      if (checkType) {
+        const verResult: VerificationResult = {
+          type: checkType,
+          passed: false,
+          timestamp: new Date().toISOString(),
+        };
+        runState.activeReflection.verificationResults.push(verResult);
+      }
+    }
   }
 
   safeWriteJson(runJsonPath, runState, context);

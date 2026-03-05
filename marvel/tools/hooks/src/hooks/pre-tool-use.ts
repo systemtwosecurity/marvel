@@ -212,7 +212,16 @@ export async function handlePreToolUse(input: PreToolUseHookInput): Promise<Sync
   }
 
   // Format lessons for context injection
-  const context = formatLessonsForContext(selectedPacks, filePath);
+  let context = formatLessonsForContext(selectedPacks, filePath);
+
+  // Inject active reflection assumptions as context
+  if (runDir) {
+    const reflectionContext = formatReflectionContext(runDir, logContext);
+    if (reflectionContext) {
+      context = context ? `${context}\n${reflectionContext}` : reflectionContext;
+    }
+  }
+
   if (!context) {
     return {};
   }
@@ -277,4 +286,43 @@ export async function handlePreToolUse(input: PreToolUseHookInput): Promise<Sync
     additionalContext: context,
   };
   return { hookSpecificOutput };
+}
+
+/**
+ * Format active reflection assumptions as injection context.
+ * Reminds the agent of its stated assumptions and risks for the current task.
+ */
+function formatReflectionContext(
+  runDir: string,
+  context: LogContext
+): string | null {
+  const runJsonPath = path.join(runDir, "run.json");
+  const runState = safeReadJson<RunState>(runJsonPath, context);
+  if (!runState?.activeReflection) return null;
+
+  const active = runState.activeReflection;
+  const pre = active.preReflection;
+
+  const lines: string[] = [];
+  lines.push(`<marvel-reflection task="${active.taskId}">`);
+  lines.push(`Task: ${active.description.slice(0, 100)}`);
+
+  if (pre.assumptions.length > 0) {
+    lines.push(`Assumptions:`);
+    for (const a of pre.assumptions.slice(0, 4)) {
+      lines.push(`  - ${a}`);
+    }
+  }
+
+  if (pre.risks && pre.risks.length > 0) {
+    lines.push(`Risks:`);
+    for (const r of pre.risks.slice(0, 3)) {
+      lines.push(`  - ${r.risk}`);
+    }
+  }
+
+  lines.push(`Confidence: ${(pre.confidence * 100).toFixed(0)}%`);
+  lines.push(`</marvel-reflection>`);
+
+  return lines.join("\n");
 }
