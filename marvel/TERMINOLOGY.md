@@ -50,18 +50,40 @@ Command patterns that were previously approved by the user and saved for future 
 A chronological log of all tool calls during a session, stored in the run's `trace.jsonl`. Each entry includes the tool name, input summary, output summary, success/failure status, and duration.
 
 ### Daemon
-A long-running Node.js process that keeps packs loaded in memory and handles hook requests over a Unix socket. One daemon per project directory, shared by all sessions. Eliminates the ~40ms cold-start penalty of spawning a new process per hook call.
+A long-running Node.js process that keeps packs loaded in memory and handles hook requests over a Unix socket and HTTP server. One daemon per project directory, shared by all sessions. Eliminates the ~40ms cold-start penalty of spawning a new process per hook call. The HTTP server hosts a live dashboard and accepts hook invocations via POST.
+
+### Dashboard
+A live HTML page served by the daemon at `http://127.0.0.1:PORT/dashboard`. Shows daemon status, active sessions, per-hook metrics (call count, latency, errors), recent hook activity, evaluator health, and loaded packs.
 
 ### Promotion
 The process of graduating learned knowledge into permanent pack content. Security rule promotion moves frequently-used learned rules into the allowlist or denylist. Lesson promotion appends high-confidence lessons to a pack's `lessons.jsonl`.
 
 ### Reflection
-The process of reviewing a session's captured guidance and extracting reusable lessons. Triggered by the `/marvel-reflect` skill. Reflection analyzes correction patterns, identifies recurring themes, and creates lesson candidates.
+The prediction-validation learning loop. Has two forms:
+
+1. **Structured reflection** (PreReflection/PostReflection) — Before a task, MARVEL records assumptions, risks, and a plan. After execution, it validates or invalidates those assumptions against actual outcomes. Invalidated assumptions feed into lesson candidates and utility score adjustments.
+
+2. **Guidance reflection** — Reviewing captured user corrections and extracting reusable lessons. Triggered by `/marvel-reflect`. Analyzes correction patterns and creates lesson candidates.
+
+### PreReflection
+A structured prediction created before task execution. Contains a plan, assumptions (derived from active packs), risks (from sensitive path detection), confidence score (0-1), and expected verification steps. Stored as `reflection-pre-<taskId>.json` in the run directory.
+
+### PostReflection
+A structured outcome created after task execution. Compares actual results against the PreReflection: which assumptions were validated, which were invalidated, what the actual outcome was, and adjusted confidence. Stored as `reflection-post-<taskId>.json`.
+
+### Assumption
+A prediction about the codebase state declared in a PreReflection (e.g., "Existing code follows established patterns"). Assumptions are explicitly validated or invalidated in the PostReflection, creating a feedback signal for the learning loop.
+
+### Confidence
+A 0-1 score on a reflection. Starts at 0.7, adjusted by risk factors, pack coverage, and execution outcome.
 
 ### Pre-Compact
 A hook that fires before Claude Code compacts its context window. MARVEL uses this to summarize the current session state (active packs, recent injections, captured guidance) so the compacted context retains MARVEL awareness.
 
 ## Specifications
+
+### Task
+A unit of work within a session, detected by task_start/task_end patterns in user prompts. Each task can have its own PreReflection/PostReflection pair. Task IDs are timestamp-derived (`task_HHmmss`).
 
 ### Spec
 A structured document describing a planned feature or change, stored under `marvel/specs/`. Specs follow a standard template with sections for goal, non-goals, context, constraints, proposed changes, acceptance criteria, and verification plan. Specs move through `backlog/` -> `active/` -> `completed/` as work progresses.

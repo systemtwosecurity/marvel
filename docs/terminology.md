@@ -47,13 +47,32 @@ Command patterns previously approved by the user and saved for future sessions. 
 A single Claude Code session, identified by a run ID (e.g., `run_20260115_103000`). Each run has its own directory under `marvel/runs/` containing trace data, guidance, and metrics. Runs are gitignored.
 
 ### Daemon
-A long-running Node.js process that keeps packs in memory and handles hook requests over a Unix socket. One daemon per project directory. Eliminates ~40ms cold-start overhead per hook call.
+A long-running Node.js process that keeps packs in memory and handles hook requests over a Unix socket and HTTP server. One daemon per project directory. Eliminates ~40ms cold-start overhead per hook call. The HTTP server hosts a live dashboard and accepts hook invocations via POST.
+
+### Dashboard
+A live HTML page served by the daemon at `http://127.0.0.1:PORT/dashboard`. Shows daemon status, active sessions, per-hook metrics, recent activity, evaluator health, and loaded packs. Uses Tailwind CSS 4.
 
 ### Promotion
 Graduating learned knowledge into permanent pack content. Security rule promotion moves frequently-used learned rules into the allowlist. Lesson promotion appends high-confidence lessons to `lessons.jsonl`.
 
 ### Reflection
-Reviewing a session's captured guidance and extracting reusable lessons. Triggered by `/marvel-reflect`. Analyzes correction patterns and creates lesson candidates.
+The prediction-validation learning loop. Has two forms:
+
+1. **Structured reflection** (PreReflection/PostReflection) — Before a task, MARVEL records assumptions, risks, and a plan. After execution, it validates or invalidates those assumptions against actual outcomes (verification results, user corrections). Invalidated assumptions feed into lesson candidates and utility score adjustments.
+
+2. **Guidance reflection** — Reviewing captured user corrections and extracting reusable lessons. Triggered by `/marvel-reflect`. Analyzes correction patterns and creates lesson candidates.
+
+### PreReflection
+A structured prediction created before task execution. Contains a plan, assumptions (derived from active packs), risks (from sensitive path detection), confidence (0-1), and expected verification steps. Stored as `reflection-pre-<taskId>.json` in the run directory.
+
+### PostReflection
+A structured outcome created after task execution. Compares actual results against the PreReflection: which assumptions were validated, which were invalidated, what the actual outcome was, and adjusted confidence. Stored as `reflection-post-<taskId>.json`.
+
+### Assumption
+A prediction about the codebase state declared in a PreReflection (e.g., "Existing code follows established patterns", "Test suite is comprehensive and passing"). Assumptions are explicitly validated or invalidated in the PostReflection, creating a feedback signal stronger than correction-only learning.
+
+### Confidence
+A 0-1 score on a PreReflection or PostReflection. Starts at 0.7, adjusted downward by risk factors and upward by pack coverage. PostReflection confidence reflects the delta from execution outcome (+0.15 for clean success, -0.2 per verification failure).
 
 ### Pre-Compact
 A hook that fires before Claude Code compacts its context window. MARVEL summarizes session state (active packs, recent injections, corrections) so the compacted context retains MARVEL awareness.

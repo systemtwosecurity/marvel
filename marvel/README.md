@@ -29,16 +29,23 @@ marvel/
 │   └── templates/            # Spec templates
 ├── runs/                     # Session trace data (gitignored)
 │   └── run_YYYYMMDD_HHMMSS/ # Per-session directory
-│       ├── run.json          # Run state (packs, tool counts, etc.)
-│       ├── trace.jsonl       # Tool call trace
+│       ├── run.json          # Run state (packs, tool counts, reflection)
+│       ├── tool_calls.jsonl  # Tool call trace
 │       ├── guidance.jsonl    # Captured user guidance
+│       ├── injections.jsonl  # Pack injection records
+│       ├── lesson-outcomes.jsonl  # Per-lesson outcome stats
+│       ├── reflection-pre-<taskId>.json   # PreReflection (assumptions, plan)
+│       ├── reflection-post-<taskId>.json  # PostReflection (validated/invalidated)
 │       └── security-metrics.json  # Security gate statistics
 └── tools/
     └── hooks/                # Hook daemon implementation
         ├── src/              # TypeScript source
-        │   ├── daemon.ts     # Unix socket daemon
+        │   ├── daemon.ts     # Dual-transport daemon (Unix socket + HTTP)
         │   ├── hooks/        # Hook handlers
         │   ├── lib/          # Shared utilities
+        │   │   ├── reflection.ts   # PreReflection/PostReflection generator
+        │   │   ├── dashboard.ts    # HTML dashboard renderer
+        │   │   └── ...             # Security, guidance, file ops, etc.
         │   ├── loaders/      # Pack and lesson loading
         │   └── schema/       # Settings validation
         ├── scripts/
@@ -51,34 +58,35 @@ marvel/
 
 ## Hook System
 
-MARVEL registers handlers for all Claude Code hook events via `.claude/settings.json`. Every hook invocation flows through a single shell entry point (`marvel-hook.sh`) which communicates with a per-project daemon over a Unix socket.
+MARVEL registers handlers for all Claude Code hook events via `.claude/settings.json`. Hook invocations flow through either a shell entry point (`marvel-hook.sh` over Unix socket) or HTTP POST (for supported events), both routing to a per-project daemon.
 
 ### Hook Lifecycle
 
 1. Claude Code fires a hook event (e.g., `PreToolUse` before a file edit)
-2. `marvel-hook.sh` reads the JSON input from stdin
-3. The shell script sends the request to the daemon via Unix socket (`nc -U`)
-4. The daemon dispatches to the appropriate handler
-5. The handler returns JSON on stdout, which Claude Code processes
+2. The event is delivered to the daemon via one of two transports:
+   - **Command hooks**: `marvel-hook.sh` reads JSON from stdin and sends it over Unix socket (`nc -U`)
+   - **HTTP hooks**: Claude Code POSTs JSON directly to `http://127.0.0.1:PORT/hooks/:hookType`
+3. The daemon dispatches to the appropriate handler
+4. The handler returns JSON, which Claude Code processes
 
 ### Hook Events
 
 | Event | When | What MARVEL Does |
 |-------|------|------------------|
-| `SessionStart` | Claude Code session begins | Create run directory, load packs, report active packs |
-| `PreToolUse` | Before Bash, Edit, Write, or Read | Score pack relevance, inject matching lessons and guardrails |
-| `PostToolUse` | After Edit, Write, Bash, Read, Grep, or Glob | Track tool outcomes, learn from approved commands |
-| `PostToolUseFailure` | After Edit, Write, or Bash fails | Record failure for later reflection |
-| `UserPromptSubmit` | User sends a message | Classify guidance type (correction, direction, task boundary) |
+| `SessionStart` | Claude Code session begins | Create run directory, load packs, initialize reflection state |
+| `PreToolUse` | Before Bash, Edit, Write, or Read | Inject matching lessons; inject active reflection context (assumptions, risks); run security gate for Bash |
+| `PostToolUse` | After Edit, Write, Bash, Read, Grep, or Glob | Track tool outcomes, learn from approved commands, record verification results and files modified into active reflection |
+| `PostToolUseFailure` | After Edit, Write, or Bash fails | Record failure, track verification failures into active reflection |
+| `UserPromptSubmit` | User sends a message | Classify guidance; detect task boundaries → create PreReflection (task_start) or close PostReflection (task_end) |
 | `PermissionRequest` | Bash command needs approval | Run through 4-layer security gate |
-| `PreCompact` | Before context window compaction | Summarize MARVEL state for the compacted context |
-| `Stop` | Session stopping | Finalize run, persist metrics |
+| `PreCompact` | Before context window compaction | Summarize MARVEL state including active reflection for the compacted context |
+| `Stop` | Session stopping | Close any open reflection, correlate outcomes, update lesson utility scores, surface promotion candidates |
 | `SubagentStart` | Subagent spawned | Track subagent lifecycle |
 | `SubagentStop` | Subagent finished | Record subagent results |
 | `Notification` | System notification | Handle notification events |
 | `TeammateIdle` | Teammate becomes idle | Respond to idle events |
 | `TaskCompleted` | Task marked complete | Record task completion |
-| `SessionEnd` | Session ending | Finalize session, trigger reflection |
+| `SessionEnd` | Session ending | Remove session from set; shut down if last |
 
 ## Relevance Scoring
 
@@ -165,25 +173,97 @@ Each lesson contains:
 6. **Inject** -- Future `PreToolUse` hooks include the lesson when the pack is relevant
 7. **Evolve** -- The `/marvel-evolve` skill graduates high-utility lessons into `guardrails.md` and prunes stale ones
 
+## Reflection System
+
+MARVEL uses a prediction-validation loop to learn from task execution, not just user corrections. Before a task begins, a **PreReflection** records what MARVEL expects to happen. After execution, a **PostReflection** compares the actual outcome against those predictions.
+
+### PreReflection (before execution)
+
+Created when `UserPromptSubmit` detects a task_start pattern (e.g., "Add error handling to the API client"). Contains:
+
+- **Plan** — high-level steps derived from the task description
+- **Assumptions** — what MARVEL expects to hold true (e.g., "Existing code follows established patterns", "Test suite is comprehensive and passing")
+- **Risks** — detected from sensitive path patterns (auth, security, migration)
+- **Confidence** — 0-1 score adjusted by risk factors and pack coverage
+- **Expected verification** — lint, typecheck, test, build
+
+Assumptions are derived from the active packs. The `code-quality` pack contributes pattern-related assumptions; the `testing` pack contributes test assumptions; etc.
+
+### PostReflection (after execution)
+
+Created when a task ends (task_end detected, new task starts, or session stops). Compares against the PreReflection:
+
+- **Actual outcome** — success/failure with failure stage (lint, test, build, typecheck)
+- **Assumptions validated** — assumptions with no contradicting evidence
+- **Assumptions invalidated** — assumptions disproven by verification failures or user corrections
+- **Confidence delta** — adjusted based on outcome (+0.15 for clean success, -0.2 per failure)
+- **Next steps** — suggested follow-ups for failures
+
+### How hooks participate
+
+| Hook | Reflection Role |
+|------|----------------|
+| `SessionStart` | Initialize `activeReflection` in run state |
+| `UserPromptSubmit` | Detect task boundaries → create PreReflection / close PostReflection |
+| `PreToolUse` | Inject `<marvel-reflection>` context block with assumptions and risks |
+| `PostToolUse` | Track verification results (lint/test/build/typecheck pass) and files modified |
+| `PostToolUseFailure` | Track verification failures |
+| `Stop` | Close any open reflection, include summary in stop message |
+| `PreCompact` | Preserve active reflection state across context compaction |
+
+### Learning from reflections
+
+Invalidated assumptions feed into the existing learning loop:
+
+1. **Assumption invalidated** → the associated pack's lessons were insufficient → utility score reduced
+2. **All assumptions validated** → lessons were effective → utility score boosted
+3. **Reflection summary** surfaced at session end alongside promotion candidates
+
+This means MARVEL learns not just from explicit user corrections but from its own prediction failures — test failures, lint errors, and build breakages all contribute to the feedback loop.
+
+### Storage
+
+Reflections are stored as pretty-printed JSON in the run directory:
+- `reflection-pre-<taskId>.json` — PreReflection
+- `reflection-post-<taskId>.json` — PostReflection
+
+Task IDs are derived from timestamp (`task_HHmmss`), unique within a run.
+
 ## Trace Storage
 
 Each session creates a run directory under `marvel/runs/` containing:
 
-- `run.json` -- Run state (active packs, tool call count, correction count, timestamps)
-- `trace.jsonl` -- Chronological log of tool calls with input/output summaries
+- `run.json` -- Run state (active packs, tool call count, correction count, active reflection, timestamps)
+- `tool_calls.jsonl` -- Chronological log of tool calls with input/output summaries
 - `guidance.jsonl` -- User guidance captured during the session
+- `injections.jsonl` -- Record of which packs/lessons were injected for which files
+- `lesson-outcomes.jsonl` -- Per-lesson outcome stats (injection count vs correction count)
+- `reflection-pre-<taskId>.json` -- PreReflection: plan, assumptions, risks, confidence
+- `reflection-post-<taskId>.json` -- PostReflection: actual outcome, assumptions validated/invalidated
 - `security-metrics.json` -- Security gate decision statistics
 
 Run directories are gitignored. They persist locally for analysis via `/marvel-health` and `pnpm analyze-decisions`.
 
 ## Daemon Architecture
 
-The daemon (`daemon.ts`) is a Node.js process that:
+The daemon (`daemon.ts`) is a Node.js process with dual transport:
 
-1. Listens on a Unix socket at `$TMPDIR/mhd-{uid}/p-project-{hash}.sock`
-2. Keeps all packs loaded in memory (no disk I/O per hook call)
-3. Dispatches incoming requests to the appropriate hook handler
-4. Tracks active sessions and self-terminates when the last session ends
+1. **Unix socket** at `$TMPDIR/mhd-{uid}/p-project-{hash}.sock` — used by `marvel-hook.sh` for command-type hooks
+2. **HTTP server** on `127.0.0.1:<PORT>` — used for HTTP-type hooks, the dashboard, and external integrations
+3. Keeps all packs loaded in memory (no disk I/O per hook call)
+4. Dispatches incoming requests to the appropriate hook handler
+5. Collects per-hook metrics (call count, latency, errors)
+6. Tracks active sessions and self-terminates when the last session ends
+
+### HTTP Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/hooks/:hookType` | POST | Invoke a hook handler (same as Unix socket path) |
+| `/health` | GET | Daemon status JSON (metrics, sessions, uptime) |
+| `/dashboard` | GET | Styled HTML dashboard with real-time metrics |
+
+The HTTP port is deterministic (derived from project directory hash, range 10000-65000) and written to `$TMPDIR/mhd-{uid}/p-{daemon-id}.port`. The dashboard is accessible at `http://127.0.0.1:PORT/dashboard`.
 
 ### Scoping
 
@@ -197,6 +277,7 @@ The daemon (`daemon.ts`) is a Node.js process that:
 2. If no socket, it spawns `node daemon.bundle.js start {daemon-id}` in the background
 3. Waits up to 500ms for the socket to appear
 4. Sends the hook request over the socket via `nc -U`
+5. The HTTP server starts alongside the socket server (non-fatal if port is unavailable)
 
 ### Management
 
