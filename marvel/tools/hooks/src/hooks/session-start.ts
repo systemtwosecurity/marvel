@@ -55,6 +55,7 @@ export async function handleSessionStart(
     toolCallCount: 0,
     correctionCount: 0,
     recentActivity: [],
+    activeReflection: undefined,
   };
 
   // Write run.json

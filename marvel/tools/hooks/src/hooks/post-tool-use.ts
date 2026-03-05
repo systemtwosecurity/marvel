@@ -9,12 +9,12 @@
 
 import * as path from "path";
 import type { PostToolUseHookInput, SyncHookJSONOutput } from "../sdk-types.js";
-import type { ToolCallRecord, RunState } from "../types.js";
+import type { ToolCallRecord, RunState, VerificationResult } from "../types.js";
 import { findRunDir } from "../lib/paths.js";
 import { safeAppendFile, safeReadJson, safeWriteJson } from "../lib/file-ops.js";
 import { logDebug, buildHookContext } from "../lib/logger.js";
 import { processApprovedCommand } from "../lib/bash-security-gate.js";
-import { recordPreCommitSuccess, invalidatePreCommitChecks } from "../lib/session-state.js";
+import { recordPreCommitSuccess, invalidatePreCommitChecks, detectPreCommitCheck } from "../lib/session-state.js";
 import { summarize, getInputSummary } from "../lib/tool-summary.js";
 
 export async function handlePostToolUse(input: PostToolUseHookInput): Promise<SyncHookJSONOutput> {
@@ -83,6 +83,33 @@ export async function handlePostToolUse(input: PostToolUseHookInput): Promise<Sy
 
   // Update tool call count in run state (this also becomes the next sequence number)
   runState.toolCallCount = sequence;
+
+  // Track reflection-relevant data for active task
+  if (runState.activeReflection) {
+    runState.activeReflection.toolCallCount += 1;
+
+    // Track verification results from bash commands
+    if (toolName === "Bash" && toolInput?.command) {
+      const checkType = detectPreCommitCheck(toolInput.command as string);
+      if (checkType) {
+        const verResult: VerificationResult = {
+          type: checkType,
+          passed: true,
+          timestamp: new Date().toISOString(),
+        };
+        runState.activeReflection.verificationResults.push(verResult);
+      }
+    }
+
+    // Track files modified
+    if ((toolName === "Edit" || toolName === "Write") && toolInput) {
+      const filePath = (toolInput.file_path ?? toolInput.path) as string | undefined;
+      if (filePath && !runState.activeReflection.filesModified.includes(filePath)) {
+        runState.activeReflection.filesModified.push(filePath);
+      }
+    }
+  }
+
   safeWriteJson(runJsonPath, runState, context);
 
   return {};

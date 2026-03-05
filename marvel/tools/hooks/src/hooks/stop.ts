@@ -21,6 +21,11 @@ import {
 } from "../lib/file-ops.js";
 import { logDebug, buildHookContext, type LogContext } from "../lib/logger.js";
 import { findSecurityCandidates, findDomainCandidates } from "../lib/promote.js";
+import {
+  generatePostReflection,
+  writeReflection,
+  formatReflectionSummary,
+} from "../lib/reflection.js";
 
 const REFLECTION_CORRECTION_THRESHOLD = 1;
 
@@ -354,6 +359,21 @@ export async function handleStop(input: StopHookInput): Promise<SyncHookJSONOutp
   // Finalize run state
   const runJsonPath = path.join(runDir, "run.json");
   const runState = safeReadJson<RunState>(runJsonPath, context);
+
+  // Close any active reflection before finalizing
+  let reflectionSummary: string | null = null;
+  if (runState?.activeReflection) {
+    const active = runState.activeReflection;
+    const postReflection = generatePostReflection(
+      active.preReflection,
+      active
+    );
+    writeReflection(runDir, postReflection, context);
+    reflectionSummary = formatReflectionSummary(postReflection);
+    logDebug(`PostReflection created at stop for ${active.taskId}`, context);
+    runState.activeReflection = undefined;
+  }
+
   if (runState) {
     runState.endedAt = new Date().toISOString();
     safeWriteJson(runJsonPath, runState, context);
@@ -378,9 +398,18 @@ export async function handleStop(input: StopHookInput): Promise<SyncHookJSONOutp
   const categoryCounts = countCorrectionsByCategory(guidance);
   const reflectionPrompt = await buildConcreteReflection(categoryCounts, context);
 
+  // Combine reflection summary and promotion prompt
+  const messageParts: string[] = [];
+  if (reflectionSummary) {
+    messageParts.push(reflectionSummary);
+  }
   if (reflectionPrompt) {
+    messageParts.push(reflectionPrompt);
+  }
+
+  if (messageParts.length > 0) {
     return {
-      systemMessage: reflectionPrompt,
+      systemMessage: messageParts.join("\n\n"),
     };
   }
 

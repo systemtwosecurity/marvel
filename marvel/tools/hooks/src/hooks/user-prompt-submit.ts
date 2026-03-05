@@ -16,6 +16,12 @@ import { safeAppendFile, safeReadJson, safeWriteJson } from "../lib/file-ops.js"
 import { logDebug, buildHookContext } from "../lib/logger.js";
 import { redactSensitive } from "../lib/redact.js";
 import { compileMarvelStatus } from "../lib/marvel-status.js";
+import {
+  generatePreReflection,
+  generatePostReflection,
+  writeReflection,
+  generateTaskId,
+} from "../lib/reflection.js";
 
 const STATUS_PATTERN = /^\/?\s*marvel[\s-]+(status|info|health)\s*$/i;
 
@@ -65,7 +71,12 @@ export async function handleUserPromptSubmit(
 
   const guidanceType = detectGuidanceType(prompt, CORRECTION_PATTERNS);
 
-  // Only capture corrections and directions
+  // Handle task boundaries for reflection system
+  if (guidanceType === "task_start" || guidanceType === "task_end") {
+    handleTaskBoundary(guidanceType, prompt, runDir, context);
+  }
+
+  // Only capture corrections and directions as guidance
   if (guidanceType !== "correction" && guidanceType !== "direction") {
     return {};
   }
@@ -104,6 +115,12 @@ export async function handleUserPromptSubmit(
   if (guidanceType === "correction") {
     if (runState) {
       runState.correctionCount = (runState.correctionCount || 0) + 1;
+
+      // Also increment active reflection's correction count
+      if (runState.activeReflection) {
+        runState.activeReflection.correctionCount += 1;
+      }
+
       runState.recentActivity = runState.recentActivity || [];
       runState.recentActivity.push({
         type: "capture",
@@ -119,4 +136,81 @@ export async function handleUserPromptSubmit(
   }
 
   return {};
+}
+
+/**
+ * Handle task boundary detection for the reflection system.
+ * On task_start: close any open reflection, then create a new PreReflection.
+ * On task_end: generate PostReflection for the active task.
+ */
+function handleTaskBoundary(
+  type: "task_start" | "task_end",
+  prompt: string,
+  runDir: string,
+  context: import("../lib/logger.js").LogContext
+): void {
+  const runJsonPath = path.join(runDir, "run.json");
+  const runState = safeReadJson<RunState>(runJsonPath, context);
+  if (!runState) return;
+
+  if (type === "task_start") {
+    // Close any existing active reflection first
+    if (runState.activeReflection) {
+      closeActiveReflection(runDir, runState, context);
+    }
+
+    // Create new PreReflection
+    const taskId = generateTaskId();
+    const preReflection = generatePreReflection(
+      taskId,
+      prompt,
+      runState.activePacks || []
+    );
+
+    // Write pre-reflection to disk
+    writeReflection(runDir, preReflection, context);
+
+    // Set active reflection in run state
+    runState.activeReflection = {
+      taskId,
+      description: prompt,
+      startedAt: new Date().toISOString(),
+      preReflection,
+      verificationResults: [],
+      filesModified: [],
+      toolCallCount: 0,
+      correctionCount: 0,
+    };
+
+    safeWriteJson(runJsonPath, runState, context);
+    logDebug(`PreReflection created for ${taskId}`, context);
+  } else if (type === "task_end") {
+    if (runState.activeReflection) {
+      closeActiveReflection(runDir, runState, context);
+      safeWriteJson(runJsonPath, runState, context);
+    }
+  }
+}
+
+/**
+ * Close the active reflection by generating a PostReflection.
+ */
+function closeActiveReflection(
+  runDir: string,
+  runState: RunState,
+  context: import("../lib/logger.js").LogContext
+): void {
+  const active = runState.activeReflection;
+  if (!active) return;
+
+  const postReflection = generatePostReflection(
+    active.preReflection,
+    active
+  );
+
+  writeReflection(runDir, postReflection, context);
+  logDebug(`PostReflection created for ${active.taskId}`, context);
+
+  // Clear active reflection
+  runState.activeReflection = undefined;
 }
