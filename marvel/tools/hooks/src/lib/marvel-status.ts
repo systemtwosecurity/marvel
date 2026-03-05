@@ -8,6 +8,7 @@
  * Returns HookOutput with additionalContext wrapped in <marvel-status> XML.
  */
 
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import type { SyncHookJSONOutput, UserPromptSubmitHookSpecificOutput } from "../sdk-types.js";
@@ -66,12 +67,23 @@ function checkDaemonHealth(daemonId: string | undefined): string {
   return "not running";
 }
 
-function getConfiguredHooks(): { configured: string[]; missing: string[] } {
-  const projectDir = process.env.CLAUDE_PROJECT_DIR;
-  if (!projectDir) {
-    return { configured: [], missing: [...VALID_HOOK_EVENTS] };
-  }
+function getProjectDir(): string {
+  return process.env.CLAUDE_PROJECT_DIR || process.cwd();
+}
 
+/**
+ * Derive the daemon ID the same way marvel-hook.sh does:
+ *   PROJECT_HASH=$(echo -n "$CLAUDE_PROJECT_DIR" | shasum -a 256 | cut -c1-12)
+ *   DAEMON_ID="project-${PROJECT_HASH}"
+ */
+function deriveDaemonId(): string {
+  const projectDir = getProjectDir();
+  const hash = crypto.createHash("sha256").update(projectDir).digest("hex").slice(0, 12);
+  return `project-${hash}`;
+}
+
+function getConfiguredHooks(): { configured: string[]; missing: string[] } {
+  const projectDir = getProjectDir();
   const settingsPath = path.join(projectDir, ".claude", "settings.json");
   const settings = safeReadJson<SettingsJson>(settingsPath, { hookType: "marvel-status" });
 
@@ -87,7 +99,7 @@ function getConfiguredHooks(): { configured: string[]; missing: string[] } {
 export function compileMarvelStatus(context: LogContext): SyncHookJSONOutput {
   try {
     const runDir = findRunDir();
-    const daemonId = process.env.MARVEL_DAEMON_ID;
+    const daemonId = process.env.MARVEL_DAEMON_ID || deriveDaemonId();
 
     const lines: string[] = [];
     lines.push("MARVEL Session Status");

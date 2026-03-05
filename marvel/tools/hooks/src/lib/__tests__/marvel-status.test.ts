@@ -9,6 +9,7 @@ import type { UserPromptSubmitHookSpecificOutput } from "../../sdk-types.js";
 vi.mock("../paths.js", () => ({
   findRunDir: vi.fn(),
   findMarvelRoot: vi.fn(),
+  getTempDir: vi.fn().mockReturnValue("/tmp/mhd-test"),
 }));
 
 vi.mock("../file-ops.js", () => ({
