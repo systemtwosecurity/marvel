@@ -79,6 +79,7 @@ REQUEST_ID="req_$(date +%s)_$RANDOM"
 LOG_PATH="${MARVEL_TEMP_DIR}/p-${DAEMON_ID}.log"
 SOCKET_PATH="${MARVEL_TEMP_DIR}/p-${DAEMON_ID}.sock"
 PID_PATH="${MARVEL_TEMP_DIR}/p-${DAEMON_ID}.pid"
+PORT_PATH="${MARVEL_TEMP_DIR}/p-${DAEMON_ID}.port"
 
 export MARVEL_SESSION_ID="$SESSION_ID"
 export MARVEL_DAEMON_ID="$DAEMON_ID"
@@ -227,7 +228,8 @@ case "$HOOK_TYPE" in
       if [[ -z "$stale_pid" ]] || ! kill -0 "$stale_pid" 2>/dev/null; then
         sock_file="${pid_file%.pid}.sock"
         log_file="${pid_file%.pid}.log"
-        rm -f "$pid_file" "$sock_file" "$log_file" 2>/dev/null
+        port_file="${pid_file%.pid}.port"
+        rm -f "$pid_file" "$sock_file" "$log_file" "$port_file" 2>/dev/null
       fi
     done
 
@@ -239,6 +241,13 @@ case "$HOOK_TYPE" in
         log_warn "Daemon request failed on session-start"
         echo '{"error":"MARVEL daemon failed on session-start. Check log: '"$LOG_PATH"'"}'
         exit 1
+      fi
+      # Read HTTP port if available and log dashboard URL
+      if [[ -f "$PORT_PATH" ]]; then
+        MARVEL_HTTP_PORT=$(cat "$PORT_PATH" 2>/dev/null)
+        if [[ -n "$MARVEL_HTTP_PORT" ]]; then
+          log_info "Dashboard: http://127.0.0.1:${MARVEL_HTTP_PORT}/dashboard"
+        fi
       fi
       echo "$response"
     else

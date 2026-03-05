@@ -20,7 +20,9 @@
  * leak (discovered during testing: 73 zombie daemons from one session).
  */
 
+import * as crypto from "crypto";
 import * as fs from "fs";
+import * as http from "http";
 import * as net from "net";
 import * as path from "path";
 import { handleSessionStart } from "./hooks/session-start.js";
@@ -35,6 +37,7 @@ import { handleSubagentStart, handleSubagentStop, handleNotification, handleTeam
 import { handlePostCompactAgents } from "./hooks/post-compact-agents.js";
 import { clearSession } from "./lib/agent-registry.js";
 import { shutdownEvalSession, warmupEvalSession } from "./lib/agent-evaluator.js";
+import { renderDashboard } from "./lib/dashboard.js";
 import {
   buildHookContext,
   generateRequestId,
@@ -42,6 +45,12 @@ import {
   logError,
   logWarn,
 } from "./lib/logger.js";
+import {
+  getMetricsSnapshot,
+  initMetrics,
+  recordHookCall,
+  setHttpPort,
+} from "./lib/metrics.js";
 import { getTempDir } from "./lib/paths.js";
 import { buildTimeoutResponse } from "./lib/timeout-response.js";
 import type { SyncHookJSONOutput } from "./sdk-types.js";
@@ -57,6 +66,19 @@ function getSocketPath(daemonId: string): string {
 
 function getPidPath(daemonId: string): string {
   return path.join(getTempDir(), `p-${daemonId}.pid`);
+}
+
+function getPortPath(daemonId: string): string {
+  return path.join(getTempDir(), `p-${daemonId}.port`);
+}
+
+/**
+ * Derive a deterministic HTTP port from the project directory.
+ * Range: 10000-65000 to avoid privileged ports and common services.
+ */
+function deriveHttpPort(projectDir: string): number {
+  const hash = crypto.createHash("sha256").update(projectDir).digest();
+  return 10000 + (hash.readUInt16BE(0) % 55000);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -178,7 +200,10 @@ const handlers: Record<string, HookHandler> = {
   "task-completed": handleTaskCompleted,
 };
 
-async function handleRequest(data: string): Promise<string> {
+async function handleRequest(
+  data: string,
+  transport: "http" | "socket" = "socket",
+): Promise<string> {
   const fallbackRequestId = generateRequestId();
   let request: HookRequest | null = null;
 
@@ -234,12 +259,14 @@ async function handleRequest(data: string): Promise<string> {
       new Promise<SyncHookJSONOutput>((resolve) => {
         timeoutId = setTimeout(() => {
           logWarn(`Handler timeout after ${handlerTimeoutMs}ms`, context);
+          recordHookCall(request.hook, handlerTimeoutMs, "timeout", requestId, transport);
           resolve(buildTimeoutResponse(request.hook, SECURITY_HOOKS.has(request.hook)));
         }, handlerTimeoutMs);
       }),
     ]);
     const durationMs = Date.now() - startTime;
     logDebug("Daemon handled hook request", { ...context, durationMs });
+    recordHookCall(request.hook, durationMs, "ok", requestId, transport);
     return JSON.stringify(output || {});
   } catch (error) {
     const durationMs = Date.now() - startTime;
@@ -247,13 +274,120 @@ async function handleRequest(data: string): Promise<string> {
       ...context,
       durationMs,
     });
+    recordHookCall(request.hook, durationMs, "error", requestId, transport);
     return JSON.stringify({});
   }
+}
+
+function startHttpServer(
+  daemonId: string,
+  socketPath: string,
+): http.Server {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const basePort = deriveHttpPort(projectDir);
+  const portPath = getPortPath(daemonId);
+
+  const httpServer = http.createServer(async (req, res) => {
+    // CORS headers for local dashboard access
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+
+    // GET /health — daemon health JSON
+    if (req.method === "GET" && url.pathname === "/health") {
+      const snapshot = getMetricsSnapshot(daemonId, socketPath, activeSessions);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(snapshot));
+      return;
+    }
+
+    // GET /dashboard — HTML dashboard
+    if (req.method === "GET" && (url.pathname === "/dashboard" || url.pathname === "/")) {
+      const snapshot = getMetricsSnapshot(daemonId, socketPath, activeSessions);
+      const html = renderDashboard(snapshot);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+
+    // POST /hooks/:hookType — hook handler
+    if (req.method === "POST" && url.pathname.startsWith("/hooks/")) {
+      const hookType = url.pathname.slice("/hooks/".length);
+
+      let body = "";
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      const response = await handleRequest(
+        JSON.stringify({
+          hook: hookType,
+          input: body ? JSON.parse(body) : {},
+          request_id: `http_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        }),
+        "http",
+      );
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(response);
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+  });
+
+  // Try the deterministic port, then port+1, +2, etc.
+  let attempts = 0;
+  const maxAttempts = 5;
+
+  const tryListen = (port: number): void => {
+    httpServer.listen(port, "127.0.0.1", () => {
+      const addr = httpServer.address();
+      const actualPort = typeof addr === "object" && addr ? addr.port : port;
+      fs.writeFileSync(portPath, actualPort.toString(), { mode: 0o600 });
+      setHttpPort(actualPort);
+      logDebug(`HTTP server listening on port ${actualPort}`, {
+        hookType: "daemon",
+        daemonId,
+      });
+    });
+  };
+
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && attempts < maxAttempts) {
+      attempts++;
+      logDebug(`Port ${basePort + attempts - 1} in use, trying ${basePort + attempts}`, {
+        hookType: "daemon",
+        daemonId,
+      });
+      tryListen(basePort + attempts);
+    } else {
+      logWarn(`HTTP server failed to start: ${err.message}`, {
+        hookType: "daemon",
+        daemonId,
+      });
+      // Non-fatal — Unix socket still works
+    }
+  });
+
+  tryListen(basePort);
+  return httpServer;
 }
 
 function startDaemon(daemonId: string): void {
   const socketPath = getSocketPath(daemonId);
   const pidPath = getPidPath(daemonId);
+
+  initMetrics();
 
   // Guard: verify socket path fits within macOS sun_path (104 bytes incl. null)
   if (socketPath.length > 103) {
@@ -318,12 +452,18 @@ function startDaemon(daemonId: string): void {
     process.exit(1);
   });
 
+  // Start HTTP server (non-fatal if it fails)
+  const httpServer = startHttpServer(daemonId, socketPath);
+
   // Graceful shutdown
+  const portPath = getPortPath(daemonId);
   const shutdown = () => {
     server.close();
+    httpServer.close();
     try {
       if (fs.existsSync(socketPath)) fs.unlinkSync(socketPath);
       if (fs.existsSync(pidPath)) fs.unlinkSync(pidPath);
+      if (fs.existsSync(portPath)) fs.unlinkSync(portPath);
     } catch (error) {
       logDebug("Failed to clean up daemon files during shutdown", {
         hookType: "daemon",
@@ -341,6 +481,7 @@ function startDaemon(daemonId: string): void {
 function stopDaemon(daemonId: string): void {
   const pidPath = getPidPath(daemonId);
   const socketPath = getSocketPath(daemonId);
+  const portPath = getPortPath(daemonId);
 
   if (fs.existsSync(pidPath)) {
     try {
@@ -364,15 +505,17 @@ function stopDaemon(daemonId: string): void {
     }
   }
 
-  if (fs.existsSync(socketPath)) {
-    try {
-      fs.unlinkSync(socketPath);
-    } catch (error) {
-      logDebug("Failed to remove socket file", {
-        hookType: "daemon",
-        daemonId,
-        filePath: socketPath,
-      });
+  for (const filePath of [socketPath, portPath]) {
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (error) {
+        logDebug("Failed to remove file during stop", {
+          hookType: "daemon",
+          daemonId,
+          filePath,
+        });
+      }
     }
   }
 }
@@ -380,6 +523,7 @@ function stopDaemon(daemonId: string): void {
 function statusDaemon(daemonId: string): void {
   const pidPath = getPidPath(daemonId);
   const socketPath = getSocketPath(daemonId);
+  const portPath = getPortPath(daemonId);
 
   if (!fs.existsSync(pidPath)) {
     console.log(`[marvel-daemon] Not running (daemon: ${daemonId})`);
@@ -392,6 +536,11 @@ function statusDaemon(daemonId: string): void {
     process.kill(pid, 0); // Check if process exists
     console.log(`[marvel-daemon] Running (pid: ${pid}, daemon: ${daemonId})`);
     console.log(`[marvel-daemon] Socket: ${socketPath}`);
+    if (fs.existsSync(portPath)) {
+      const port = fs.readFileSync(portPath, "utf-8").trim();
+      console.log(`[marvel-daemon] HTTP: http://127.0.0.1:${port}`);
+      console.log(`[marvel-daemon] Dashboard: http://127.0.0.1:${port}/dashboard`);
+    }
   } catch {
     console.log(`[marvel-daemon] Stale PID file (daemon: ${daemonId})`);
     fs.unlinkSync(pidPath);
@@ -424,7 +573,7 @@ switch (command) {
     const tempDir = getTempDir();
     const files = fs
       .readdirSync(tempDir)
-      .filter((f) => f.startsWith("p-") || f.startsWith("mhd-") || f.startsWith("marvel-hooks-"));
+      .filter((f) => f.startsWith("p-") || f.startsWith("mhd-") || f.startsWith("marvel-hooks-") || f.endsWith(".port"));
     let cleanedCount = 0;
     for (const file of files) {
       try {
