@@ -17,6 +17,7 @@ The key design principles:
 - **Non-blocking by default.** Hooks return in under 10ms. Claude never waits for MARVEL.
 - **Inject, don't intercept.** Most hooks add context to Claude's reasoning rather than blocking actions. The security gate is the exception.
 - **Learn from corrections.** When you correct Claude, MARVEL captures the correction and can promote it into a permanent lesson.
+- **Learn from predictions.** Before each task, MARVEL records assumptions about what will happen. After execution, it validates or invalidates those assumptions — learning from verification failures, not just user corrections.
 - **Packs are portable.** Knowledge packs are self-contained directories. Share them across projects or teams.
 
 ## Core Concepts
@@ -29,7 +30,9 @@ The key design principles:
 
 **Security Gate** is a 4-layer evaluation system for bash commands: allowlist (known-safe, instant), denylist (known-dangerous, blocked), learned rules (previously approved), and LLM evaluator (analyzes unknown commands).
 
-**Daemon** is a long-running Node.js process that keeps packs loaded in memory and handles hook requests over a Unix socket. One daemon per project directory, shared across all sessions.
+**Daemon** is a long-running Node.js process that keeps packs loaded in memory and handles hook requests over a Unix socket and HTTP server. One daemon per project directory, shared across all sessions. The HTTP server also hosts a live dashboard at `http://127.0.0.1:PORT/dashboard`.
+
+**Reflection** is a prediction-validation loop. Before a task, MARVEL creates a PreReflection with assumptions and a plan. After execution, a PostReflection validates or invalidates those assumptions, feeding results into lesson utility scores.
 
 See [docs/terminology.md](docs/terminology.md) for the full glossary.
 
@@ -106,7 +109,8 @@ When Claude touches a TypeScript file, the promoted lesson is injected: "Use `un
 │   ├── security/                # Security gate configuration
 │   ├── specs/                   # Feature specifications
 │   ├── runs/                    # Session trace data (gitignored)
-│   └── tools/hooks/             # Hook daemon (TypeScript)
+│   │   └── run_*/               # Per-session: run.json, guidance, reflections
+│   └── tools/hooks/             # Hook daemon (TypeScript, dual-transport)
 └── .claude/
     ├── settings.json            # Hook registrations
     ├── commands/                 # Slash commands
@@ -140,6 +144,13 @@ bin/marvel-daemon status [path]     # Show daemon status for a project
 bin/marvel-daemon log [path]        # Tail daemon log
 bin/marvel-daemon restart [path]    # Kill daemon (auto-restarts on next hook)
 bin/marvel-daemon cleanup           # Remove stale PID/socket files
+```
+
+The daemon also exposes an HTTP dashboard. The port is deterministic per project and displayed at session start:
+
+```bash
+curl http://127.0.0.1:PORT/health      # JSON status
+open http://127.0.0.1:PORT/dashboard   # Live HTML dashboard
 ```
 
 ## Documentation
